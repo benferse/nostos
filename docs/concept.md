@@ -6,7 +6,7 @@ I am a software developer, and I work on many different platforms — Windows,
 macOS, Linux. I use a lot of the same tools across the different platforms,
 and it's difficult to keep my development environment in sync. For example:
 
-- I might be working on macOS and install a new copilot cli plugin, but when I
+- I might be working on macOS and install a new Copilot CLI plugin, but when I
   switch to a dev box Cloud PC running Windows, I have to remember to install
   the new plugin there too
 - I might tweak some settings or configuration on one machine. This now needs
