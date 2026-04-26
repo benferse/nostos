@@ -1114,7 +1114,7 @@ The target file (e.g., `~/.bashrc`) is a symlink pointing to the managed
 file inside the nostos repository clone.
 
 ```
-~/.bashrc → ~/nostos-repo/dotfiles/.bashrc
+~/.bashrc → ~/nostos-repo/dotfiles/bashrc
 ```
 
 **Pros:**
@@ -1140,7 +1140,7 @@ nostos copies managed files from the repository to their target locations.
 The repo and the target are independent after copying.
 
 ```
-~/nostos-repo/dotfiles/.bashrc  →(copy)→  ~/.bashrc
+~/nostos-repo/dotfiles/bashrc  →(copy)→  ~/.bashrc
 ```
 
 **Pros:**
