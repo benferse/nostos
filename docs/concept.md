@@ -37,9 +37,9 @@ limitations will help guide the design of nostos.
 | **Dotbot** | YAML-driven dotfile bootstrapper | Simple config, plugin ecosystem | Narrow scope, no ongoing convergence |
 
 None of these tools cleanly address the full loop of: dotfiles + packages +
-editor plugins + shell environment + platform conditionals + machine-specific
-overrides, in a single, opinionated tool designed for a single developer
-working across many machines.
+shell environment + platform conditionals + machine-specific overrides, in
+a single, opinionated tool designed for a single developer working across
+many machines.
 
 ## Scope
 
@@ -517,7 +517,7 @@ Makefile or shell scripts with some structure.
 
 #### Option C: Declarative with imperative escape hatches (hybrid)
 
-Core operations (dotfile placement, package installation, plugin sync) are
+Core operations (dotfile placement, package installation) are
 declarative and convergent. For anything that doesn't fit the declarative
 model, users can define `hooks` — imperative scripts that run at defined
 points (before/after sync, on first setup, etc.).
