@@ -276,6 +276,58 @@ a single line. Where names diverge, explicit mappings are clean and obvious.
 The `platforms` field handles the "only on Linux" case without needing
 platform-specific sections.
 
+#### Resolver behavior: how explicit mappings interact with the tool name
+
+The tool name is always the **default package name** for any package
+manager. Explicit `install.*` entries **override** the default for specific
+managers, but do not suppress it for managers that aren't listed.
+
+Given this tool definition:
+
+```toml
+[[tool]]
+name = "fd"
+install.apt = "fd-find"
+install.cargo = "fd-find"
+```
+
+The resolver produces this package name per manager:
+
+| Manager | Package name | Source |
+|---------|-------------|--------|
+| brew | `fd` | Implicit — tool name used as default |
+| apt | `fd-find` | Explicit override |
+| pacman | `fd` | Implicit — tool name used as default |
+| winget | `fd` | Implicit — tool name used as default |
+| cargo | `fd-find` | Explicit override |
+
+The resolver then picks the first available manager from the preference
+list and installs using the corresponding package name (implicit or
+explicit). It stops at the first success.
+
+**Cargo-only tools and fallback behavior:**
+
+For tools that only exist in one package manager, the implicit default
+may cause a harmless failed attempt:
+
+```toml
+[[tool]]
+name = "cargo-edit"
+install.cargo = "cargo-edit"
+```
+
+On a machine with `installer-priority = ["brew", "cargo"]`, the resolver
+tries `brew install cargo-edit` (implicit default), which fails, then
+tries `cargo install cargo-edit` (explicit), which succeeds. The failed
+brew attempt is harmless — the resolver moves on to the next manager in
+the priority list.
+
+**Open question:** Should nostos suppress output for failed fallback
+attempts and only surface the final result? Or should it provide an
+`explicit-only` flag on tools to skip the implicit fallback entirely?
+This decision can be deferred until the resolver is implemented and the
+real-world noise level is known.
+
 ### Configuration file format
 
 With the tool-centric model decided, the question becomes which file format
