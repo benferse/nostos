@@ -530,6 +530,22 @@ and well-understood. nostos should make the git workflow frictionless
 (automatic commit messages, easy push/pull commands). A cloud overlay can be
 explored later if real need emerges.
 
+**Git merge conflicts during sync:**
+
+When `nostos sync` pulls remote changes, the git repo itself may have
+merge conflicts (e.g., two machines edited `nostos.toml` concurrently).
+This is distinct from the dotfile conflict detection (which handles files
+nostos *applies*) — this is about the config repo's own files.
+
+For now, nostos reports the git conflict and stops. The user resolves it
+manually using standard git tools (`git status`, edit the conflicted
+files, `git add`, `git commit`), then re-runs `nostos apply`.
+
+**Open question:** Should nostos try smarter strategies (auto-merge
+non-overlapping TOML changes, use `git pull --rebase` to linearize
+history)? This can be revisited once real-world conflict frequency is
+known.
+
 ### Execution model
 
 How nostos applies configuration to a machine.
