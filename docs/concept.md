@@ -488,7 +488,6 @@ and pull, or users can use git directly.
 **Cons:**
 - Manual sync — user must remember to push/pull (or set up hooks)
 - Merge conflicts are possible if two machines diverge
-- Git is not installed everywhere by default (though it's close)
 - Binary files (fonts, icons) bloat the repo over time
 
 #### Option B: Cloud storage (OneDrive, iCloud, Dropbox)
