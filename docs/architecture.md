@@ -161,8 +161,9 @@ id = "work-macbook"                    # set at init time
 
 ## Error handling
 
-nostos uses `anyhow` for application-level errors and `thiserror` for
-library-level error types. The general approach:
+nostos uses application-level error propagation at command boundaries and
+structured module-level error types within internal components. The
+general approach:
 
 - **Config parsing errors** — report file, line, and field with a clear
   message. Fail fast — don't partially apply a broken config.
