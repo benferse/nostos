@@ -1,0 +1,25 @@
+[package]
+name = "nostos"
+version = "0.1.0"
+license-file = "LICENSE"
+documentation = "https://docs.rs/nostos"
+homepage = "https://github.com/benferse/nostos"
+repository = "https://github.com/benferse/nostos"
+edition = "2024"
+rust-version = "1.95"
+authors = ["Ben"]
+autolib = false
+autobenches = false
+autobins = false
+autoexamples = false
+autotests = false
+description = "Welcome home, hero"
+categories = ["command-line-utilities"]
+
+[lib]
+name = "nostos"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nostos"
+path = "src/main.rs"
