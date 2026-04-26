@@ -882,7 +882,7 @@ nostos track ~/.config/starship.toml
 # Sync: commit local changes, pull remote changes, apply
 nostos sync
 
-# Show current machine identity and platform info
+# Show current machine identity, platform, and detected package managers
 nostos status
 ```
 
@@ -1082,9 +1082,10 @@ You tweaked your starship prompt on your laptop and want to capture it:
 
 ```shell
 # You edited ~/.config/starship.toml directly
-# nostos detects the local modification:
-nostos status
-#   Modified: config/starship.toml (local changes not in repo)
+# nostos plan shows the local modification:
+nostos plan
+#   Dotfiles:
+#     config/starship.toml             — local modification (not in repo)
 
 # Copy the changed file back into the repo (strips the dot)
 nostos track ~/.config/starship.toml
