@@ -318,6 +318,8 @@ target = "~"
 [dotfiles.platforms.macos]
 "config/alacritty/alacritty.toml" = "macos/config/alacritty/alacritty.toml"
 ```
+
+**Pros:**
 - Native to the Rust ecosystem — `serde` + `toml` crate, zero friction
 - Familiar to anyone who writes `Cargo.toml`
 - `[[tool]]` array-of-tables maps naturally to the tool-centric model
