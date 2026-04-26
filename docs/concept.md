@@ -19,7 +19,7 @@ and it's difficult to keep my development environment in sync. For example:
   would like all of my tools and config to be made available quickly and
   consistently
 
-There are some solutions for managing dotfiles, automating software installs.
+There are some solutions for managing dotfiles and automating software installs.
 I would like a solution that is optimized for my specific needs.
 
 ## Prior art
