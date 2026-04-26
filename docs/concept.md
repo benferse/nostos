@@ -822,9 +822,31 @@ already provides that specificity.
 
 ### Machine identity
 
-Each machine gets a stable identity — either auto-detected (hostname) or
-explicitly assigned by the user on first run. This identity keys into the
-machine-specific override layer.
+Each machine gets a stable identity — either auto-detected from the
+hostname or explicitly assigned by the user at init time:
+
+```shell
+# Auto-detect machine identity from hostname
+nostos init https://github.com/user/dotfiles.git
+
+# Explicitly assign a machine identity
+nostos init https://github.com/user/dotfiles.git --machine work-macbook
+```
+
+The machine identity is stored in the local state file (`state.toml`)
+alongside the applied-file hashes:
+
+```toml
+# state.toml (local, not synced)
+[machine]
+id = "work-macbook"
+
+[applied]
+".bashrc" = { hash = "sha256:abc123...", timestamp = "2026-04-26T20:00:00Z" }
+```
+
+This identity is matched against `[dotfiles.machines.<name>]` sections
+in `nostos.toml` to apply machine-specific overrides.
 
 ## Proposed UX
 
