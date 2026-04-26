@@ -119,10 +119,10 @@ platforms = ["linux"]                  # optional, default: all platforms
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
-| `dotfiles.source` | string (path) | yes | — |
-| `dotfiles.target` | string (path) | yes | — |
-| `files.source` | string (path) | no | — |
-| `files.target` | string (path) | no | — |
+| `dotfiles.source` | string (path) | yes (if present) | — |
+| `dotfiles.target` | string (path) | yes (if present) | — |
+| `files.source` | string (path) | yes (if present) | — |
+| `files.target` | string (path) | yes (if present) | — |
 | `hook.name` | string | yes | — |
 | `hook.run` | string (path) | yes | — |
 | `hook.when` | enum: `pre-apply`, `post-apply` | yes | — |
