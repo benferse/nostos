@@ -1113,6 +1113,12 @@ ignored by git.
 │         └───────────────────────┘           │
 ├─────────────────────────────────────────────┤
 │              Reconciler                     │
+│                                             │
+│  ┌──────────────────────────────────────┐   │
+│  │          Hook Executor               │   │
+│  │  (pre-apply and post-apply scripts)  │   │
+│  └──────────────────────────────────────┘   │
+│                                             │
 │  ┌──────────────┐   ┌──────────────────┐    │
 │  │   Dotfiles   │   │  Tool Resolver   │    │
 │  │    Module    │   │                  │    │
@@ -1134,6 +1140,10 @@ ignored by git.
 ```
 
 Key components:
+
+- **Hook Executor** — runs imperative scripts at defined lifecycle points
+  (pre-apply and post-apply). Handles platform/machine filtering, runs
+  hooks in declaration order, and reports failures without aborting.
 
 - **Dotfiles Module** — manages configuration files via the copy-based
   placement strategy. Handles conflict detection using content hashes,
