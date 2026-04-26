@@ -75,7 +75,7 @@ functions, PowerShell-scoped env vars — but cannot set system-wide variables.
 |------|------|---------|
 | Shell aliases/functions | `.bashrc` / `.zshrc` (dotfile) | PowerShell `$PROFILE` (dotfile) |
 | Shell-scoped env vars | `.bashrc` / `.zshenv` (dotfile) | PowerShell `$PROFILE` (dotfile) |
-| System-wide env vars | `.pam_environment` or shell config (dotfile) | **Windows Registry** (not a file) |
+| System-wide env vars | Shell config (dotfile) | **Windows Registry** (not a file) |
 | PATH additions | Shell config (dotfile) | **Windows Registry** (not a file) |
 
 For the initial implementation, nostos manages the PowerShell profile as a
@@ -1234,10 +1234,20 @@ This requires tracking what nostos last applied.
 **State tracking approach:**
 
 nostos maintains a local state file (not synced to git) that records, for
-each managed file, the hash of the content that was last applied:
+each managed file, the hash of the content that was last applied. The
+state file location follows platform conventions:
+
+| Platform | State file location |
+|----------|-------------------|
+| Linux / macOS | `~/.config/nostos/state.toml` |
+| Windows | `%LOCALAPPDATA%\nostos\state.toml` |
+
+`LOCALAPPDATA` is used on Windows (rather than `APPDATA`) because the
+state file is machine-specific — it tracks what was applied on this
+particular machine and should not roam across devices.
 
 ```toml
-# ~/.config/nostos/state.toml (local, not synced)
+# state.toml (local, not synced)
 [applied]
 ".bashrc" = { hash = "sha256:abc123...", timestamp = "2026-04-26T20:00:00Z" }
 ".config/starship.toml" = { hash = "sha256:def456...", timestamp = "2026-04-25T10:30:00Z" }
