@@ -878,12 +878,12 @@ target = "~"
 [dotfiles.platforms.linux]
 "config/alacritty/alacritty.toml" = "linux/config/alacritty/alacritty.toml"
 
+[dotfiles.machines.work-macbook]
+"gitconfig.local" = "machines/work-macbook/gitconfig.local"
+
 [files]
 source = "files/"
 target = "~"
-
-[dotfiles.machines.work-macbook]
-"gitconfig.local" = "machines/work-macbook/gitconfig.local"
 
 # Pre-apply hooks run before dotfiles and tools — use for bootstrapping
 # package managers and other prerequisites
