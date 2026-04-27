@@ -18,8 +18,8 @@ works end-to-end.
 - `nostos plan` command (dry-run of apply)
 - `nostos status` command (show machine identity and platform info)
 - Structured error handling (`thiserror` + `anyhow` + `miette` for
-  config diagnostics) — wired up from the start so every MVP command
-  returns typed errors with context
+  config diagnostics) — wired up from the start so typed module errors
+  are surfaced with context at command boundaries
 
 **Deferred to post-MVP:**
 - Tool resolver and installer registry
@@ -142,7 +142,7 @@ platforms = ["linux"]                  # optional, default: all platforms
 |-------|---------|-------|
 | `clap` | CLI argument parsing | derive API |
 | `serde` | Serialization/deserialization | with `derive` feature |
-| `toml` | Config file parsing | `Spanned<T>` used for byte-offset reporting in config errors |
+| `toml` | Config file parsing | `toml::Spanned<T>` used for byte-offset reporting in config errors |
 | `thiserror` | Typed error enums per module | derive API |
 | `anyhow` | Application-level error propagation | CLI layer only — never in public library APIs |
 | `miette` | Rich diagnostics for config parse errors | `fancy` feature in the binary; config module only |
@@ -233,10 +233,11 @@ Error: invalid value for `hook.when`
 |------|---------|
 | 0 | Success — no failures, no conflicts requiring attention |
 | 1 | Generic / unexpected error |
-| 2 | Config error (parse, validation, missing file) |
-| 3 | Platform / environment error (unsupported OS, missing required package manager) |
-| 4 | Partial failure (`apply` completed but one or more tools/hooks failed) |
-| 5 | Git error (clone/pull/push/merge conflict) |
+| 2 | CLI / usage error (invalid arguments; matches `clap` default behavior unless explicitly overridden) |
+| 3 | Config error (parse, validation, missing file) |
+| 4 | Platform / environment error (unsupported OS, missing required package manager) |
+| 5 | Partial failure (`apply` completed but one or more tools/hooks failed) |
+| 6 | Git error (clone/pull/push/merge conflict) |
 | 130 | Interrupted (SIGINT) — standard Unix convention |
 
 `nostos plan` never exits non-zero for conflicts — it is a dry-run.
