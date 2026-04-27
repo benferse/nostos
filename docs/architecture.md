@@ -17,6 +17,9 @@ works end-to-end.
 - `nostos apply` command (apply dotfiles)
 - `nostos plan` command (dry-run of apply)
 - `nostos status` command (show machine identity and platform info)
+- Structured error handling (`thiserror` + `anyhow` + `miette` for
+  config diagnostics) — wired up from the start so typed module errors
+  are surfaced with context at command boundaries
 
 **Deferred to post-MVP:**
 - Tool resolver and installer registry
@@ -139,7 +142,10 @@ platforms = ["linux"]                  # optional, default: all platforms
 |-------|---------|-------|
 | `clap` | CLI argument parsing | derive API |
 | `serde` | Serialization/deserialization | with `derive` feature |
-| `toml` | Config file parsing | |
+| `toml` | Config file parsing | `toml::Spanned<T>` used for byte-offset reporting in config errors |
+| `thiserror` | Typed error enums per module | derive API |
+| `anyhow` | Application-level error propagation | CLI layer only — never in public library APIs |
+| `miette` | Rich diagnostics for config parse errors | `fancy` feature in the binary; config module only |
 | `git2` | Git operations via libgit2 | deferred to post-MVP |
 | `sha2` | Content hashing for conflict detection | SHA-256 |
 | `dirs` | Platform-appropriate config/data directories | state.toml location |
@@ -161,20 +167,82 @@ id = "work-macbook"                    # set at init time
 
 ## Error handling
 
-nostos uses application-level error propagation at command boundaries and
-structured module-level error types within internal components. The
-general approach:
+### Crate roles
 
-- **Config parsing errors** — report file, line, and field with a clear
-  message. Fail fast — don't partially apply a broken config.
-- **Dotfile conflicts** — not errors. Reported as warnings, backed up,
-  and continued.
-- **Tool install failures** — reported per-tool, does not abort remaining
-  tools. Exit code reflects whether any failures occurred.
-- **Hook failures** — reported per-hook, does not abort remaining hooks
-  or other phases.
-- **Git errors** — reported with actionable guidance (e.g., "merge
-  conflict in nostos.toml — resolve with git and re-run `nostos apply`").
+| Crate | Where used | Role |
+|-------|-----------|------|
+| `thiserror` | Per-module `Error` enums (`config::Error`, `reconcile::Error`, `state::Error`, `git::Error`, `platform::Error`) | Typed, matchable error variants with `#[derive(Error)]` |
+| `anyhow` | CLI command handlers in `src/cli/` | Aggregates errors from multiple modules via `?` with `.context()` breadcrumbs |
+| `miette` | `config::Error` variants that carry source spans | Config errors implement `Diagnostic` so the binary renders file/line/column with labels and `help:` hints |
+
+The binary entry point installs `miette`'s fancy report handler so
+config errors render with source context:
+
+```text
+Error: invalid value for `hook.when`
+  × expected "pre-apply" or "post-apply", got "before"
+   ╭─[nostos.toml:14:10]
+ 13 │ name = "install-homebrew"
+ 14 │ when = "before"
+    ·          ──┬──
+    ·            ╰── unknown variant
+ 15 │ run  = "hooks/install-homebrew.sh"
+   ╰────
+  help: valid values are "pre-apply", "post-apply"
+```
+
+### Conventions
+
+- Library code (`src/lib.rs` and submodules) returns
+  `Result<T, module::Error>`. Public APIs never expose `anyhow::Error`.
+- CLI command handlers convert module errors via `?` into
+  `anyhow::Result`, attaching `.context("while applying dotfiles")`-style
+  breadcrumbs at command boundaries.
+- Error enums are `#[non_exhaustive]` so adding variants is
+  non-breaking.
+- Config errors capture `toml::Spanned<T>` values and implement
+  `miette::Diagnostic` to surface file, line, and column with a `help:`
+  hint.
+- Recoverable conditions (dotfile conflicts, per-tool install failures,
+  per-hook failures) are **not** `Err` returns. They are collected into a
+  structured `Report` by the reconciler, which determines the final exit
+  code.
+
+### Failure semantics per phase
+
+- **Config parsing** — any parse or validation error produces `Err` with
+  a `miette` diagnostic. Fail fast — don't partially apply a broken
+  config.
+- **Platform detection** — unsupported OS or missing required package
+  manager produces `Err`. Cannot proceed without a valid platform.
+- **Dotfile conflicts** — not errors. The reconciler logs them as
+  warnings, backs up the conflicting target, and continues. Conflicts
+  are entries in the `Report`.
+- **Tool install failures** — reported per-tool in the `Report`. Does
+  not abort remaining tools. The final exit code reflects whether any
+  failures occurred.
+- **Hook failures** — reported per-hook in the `Report`. Does not abort
+  remaining hooks or other phases.
+- **Git errors** — produce `Err` with actionable guidance (e.g., "merge
+  conflict in nostos.toml — resolve with git and re-run
+  `nostos apply`").
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success — no failures, no conflicts requiring attention |
+| 1 | Generic / unexpected error |
+| 2 | CLI / usage error (invalid arguments; matches `clap` default behavior unless explicitly overridden) |
+| 3 | Config error (parse, validation, missing file) |
+| 4 | Platform / environment error (unsupported OS, missing required package manager) |
+| 5 | Partial failure (`apply` completed but one or more tools/hooks failed) |
+| 6 | Git error (clone/pull/push/merge conflict) |
+| 130 | Interrupted (SIGINT) — standard Unix convention |
+
+`nostos plan` never exits non-zero for conflicts — it is a dry-run.
+Only structural errors (bad config, unsupported platform) produce
+non-zero exits from `plan`.
 
 ## Testing strategy
 
