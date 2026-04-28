@@ -31,6 +31,8 @@ works end-to-end.
 - `[files]` section (verbatim copy)
 - Per-distro installer preferences
 - Machine-specific dotfile overrides
+- Multi-repo support (`repo add`/`remove`/`list`, unified merge across
+  repos, `[[repo]]` state tracking — see concept.md)
 
 ## Module structure
 
@@ -42,6 +44,7 @@ src/
 │   ├── mod.rs           ← clap app definition
 │   ├── apply.rs         ← nostos apply
 │   ├── plan.rs          ← nostos plan
+│   ├── repo.rs          ← nostos repo add/remove/list (post-MVP)
 │   └── status.rs        ← nostos status
 ├── config/              ← configuration parsing and merging
 │   ├── mod.rs           ← top-level Config struct
@@ -58,7 +61,8 @@ src/
 │   ├── os.rs            ← OS, arch, distro detection
 │   └── packages.rs      ← available package manager discovery
 ├── state/               ← local machine state (state.toml)
-│   └── mod.rs           ← read/write applied hashes, machine identity
+│   └── mod.rs           ← read/write applied hashes, machine identity,
+│                           repo registry (post-MVP: [[repo]] array)
 └── git/                 ← git operations
     └── mod.rs           ← clone, commit, push, pull via libgit2
 ```
@@ -159,10 +163,28 @@ concept.md) and is never synced to git.
 [machine]
 id = "work-macbook"                    # set at init time
 
+# --- Post-MVP: multi-repo support ---
+# When multi-repo is enabled, the repo registry tracks all configured
+# repos and their ordering. For single-repo (MVP), this section is
+# absent and the single clone path is inferred.
+#
+# [[repo]]
+# name = "dotfiles"
+# url = "https://github.com/user/dotfiles.git"
+# path = "~/.config/nostos/repos/dotfiles"
+# order = 0
+#
+# [[repo]]
+# name = "work-dotfiles"
+# url = "https://dev.azure.com/org/project/_git/work-dotfiles"
+# path = "~/.config/nostos/repos/work-dotfiles"
+# order = 1
+
 [applied]
 # Key: target path (with dot), Value: hash + timestamp of last apply
-".bashrc" = { hash = "sha256:...", timestamp = "2026-04-26T20:00:00Z" }
-".config/starship.toml" = { hash = "sha256:...", timestamp = "2026-04-25T10:30:00Z" }
+# Post-MVP: entries gain a `source` field for repo attribution
+".bashrc" = { hash = "sha256:...", timestamp = "2026-04-26T20:00:00Z", source = "dotfiles" }
+".config/starship.toml" = { hash = "sha256:...", timestamp = "2026-04-25T10:30:00Z", source = "work-dotfiles" }
 ```
 
 ## Error handling

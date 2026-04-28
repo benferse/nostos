@@ -529,6 +529,11 @@ and well-understood. nostos should make the git workflow frictionless
 (automatic commit messages, easy push/pull commands). A cloud overlay can be
 explored later if real need emerges.
 
+nostos supports multiple independent git repos per machine — for example,
+a personal dotfiles repo on GitHub and a private work repo on ADO. Each
+repo is self-contained with its own `nostos.toml`. See the
+[Multi-repo support](#multi-repo-support) section for details.
+
 **Git merge conflicts during sync:**
 
 When `nostos sync` pulls remote changes, the git repo itself may have
@@ -860,6 +865,10 @@ id = "work-macbook"
 ".bashrc" = { hash = "sha256:abc123...", timestamp = "2026-04-26T20:00:00Z" }
 ```
 
+When multiple repos are configured, `state.toml` also tracks a
+`[[repo]]` array and per-file source attribution. See
+[State file additions](#state-file-additions).
+
 This identity is matched against `[dotfiles.machines.<name>]` sections
 in `nostos.toml` to apply machine-specific overrides.
 
@@ -868,6 +877,15 @@ in `nostos.toml` to apply machine-specific overrides.
 ```
 # First-time setup: clone config repo and apply
 nostos init https://github.com/user/dotfiles.git
+
+# Add another config repo (e.g., work-specific dotfiles)
+nostos repo add https://dev.azure.com/org/project/_git/work-dotfiles
+
+# List configured repos and their order
+nostos repo list
+
+# Remove a repo
+nostos repo remove work-dotfiles
 
 # Apply current configuration (converge to desired state)
 nostos apply
@@ -1146,8 +1164,10 @@ ignored by git.
 │              Config Parser (TOML)           │
 │         ┌───────────────────────┐           │
 │         │   Layering / Merge    │           │
-│         │  base → platform →    │           │
-│         │      machine          │           │
+│         │  per-repo: base →     │           │
+│         │    platform → machine │           │
+│         │  cross-repo: ordered  │           │
+│         │    merge (post-MVP)   │           │
 │         └───────────────────────┘           │
 ├─────────────────────────────────────────────┤
 │              Reconciler                     │
@@ -1286,6 +1306,9 @@ particular machine and should not roam across devices.
 
 ```toml
 # state.toml (local, not synced)
+[machine]
+id = "work-macbook"
+
 [applied]
 ".bashrc" = { hash = "sha256:abc123...", timestamp = "2026-04-26T20:00:00Z" }
 ".config/starship.toml" = { hash = "sha256:def456...", timestamp = "2026-04-25T10:30:00Z" }
@@ -1326,7 +1349,159 @@ nostos track ~/.bashrc   # copies the current file back into the repo
 ```
 
 This updates the repo source and the applied-state hash, bringing
-everything back in sync.
+everything back in sync. When multiple repos are configured, `track`
+copies the file back into the repo that currently owns it (per state
+tracking). See [Multi-repo support](#multi-repo-support) for details.
+
+## Multi-repo support
+
+A user's configuration may span multiple git repos — for example, a
+public personal dotfiles repo on GitHub and a private work repo on ADO
+that should only be applied on certain machines. nostos natively supports
+multiple independent repo checkouts per machine.
+
+### Model: stacked independent repos
+
+Each repo is self-contained — its own `nostos.toml`, dotfiles, tools,
+hooks, and preferences. `state.toml` tracks an **ordered list** of repos,
+and `nostos apply` processes all of them in order.
+
+All repos are **peers**. There is no special "base" vs. "overlay"
+distinction. The first repo added is order 0 (lowest priority — gets
+overridden by later repos). Any repo can be added or removed at any
+time, including the first one. The "base" concept is a convention (the
+first repo usually has bootstrapping hooks and core dotfiles), not a
+mechanism.
+
+### `nostos init` as sugar
+
+`init` is a convenience that sets machine identity and adds the first
+repo in one operation:
+
+```shell
+nostos init https://github.com/user/dotfiles.git --machine work-macbook
+```
+
+Internally, this performs two steps: setting the machine identity in
+`state.toml`, then adding the repo (equivalent to `nostos repo add`).
+Machine identity must be set before the first apply so that
+`[dotfiles.machines.*]` overrides match correctly. Without an explicit
+`--machine` flag, nostos auto-detects from the hostname — but the
+auto-detected name may not match machine names in config, causing
+machine-specific files to be silently skipped.
+
+`init` errors if nostos is already initialized (any repos exist). To
+start over: `nostos init --replace <url>`.
+
+### `nostos repo add` / `remove` / `list`
+
+After the first repo, use the `repo` subcommand group:
+
+```shell
+# Add a repo (appended at next order number)
+nostos repo add https://dev.azure.com/org/project/_git/work-dotfiles
+
+# Custom name
+nostos repo add --name work https://dev.azure.com/org/project/_git/work-dotfiles
+
+# Don't apply immediately
+nostos repo add --no-apply https://dev.azure.com/org/project/_git/work-dotfiles
+
+# Remove by name (files left on disk; run `nostos apply` to converge)
+nostos repo remove work-dotfiles
+
+# Remove and clean up exclusively-managed files
+nostos repo remove work-dotfiles --clean
+
+# List repos and their order
+nostos repo list
+#   0: dotfiles        — https://github.com/user/dotfiles.git
+#   1: work-dotfiles   — https://dev.azure.com/org/...
+```
+
+Repo names must be unique. The name is inferred from the URL's last path
+segment (stripping a trailing `.git`), so two repos with the same final
+segment — e.g., `github.com/user/dotfiles` and
+`dev.azure.com/org/project/_git/dotfiles` — will collide. When a
+collision is detected, `repo add` errors and prompts the user to supply
+`--name`.
+
+Removing the last repo leaves nostos in a zero-repo state. The machine
+identity is preserved.
+
+### Full bootstrap on a new work machine
+
+```shell
+# Install nostos
+curl -fsSL https://github.com/benferse/nostos/releases/latest/download/nostos-macos-arm64 \
+  -o /usr/local/bin/nostos && chmod +x /usr/local/bin/nostos
+
+# First-time setup: identity + personal dotfiles
+nostos init https://github.com/user/dotfiles.git --machine work-macbook
+
+# Add work config (only on work machines)
+nostos repo add https://dev.azure.com/org/project/_git/work-dotfiles
+```
+
+On a personal machine, skip the `repo add`.
+
+### Merge semantics
+
+When multiple repos are configured, nostos must decide what happens when
+they define overlapping dotfiles, tools, or hooks. The merge operates on
+the **already-resolved** output of each repo — that is, within each repo,
+the base → platform → machine layering is applied first, producing a flat
+file list and tool set. Then repos are merged across in order.
+
+**Dotfiles: last-repo-wins per target path.** nostos builds a unified file
+map from all repos in order. If two repos both place a file at the same
+target path, the later repo's version wins (the earlier repo's file is
+shadowed). When a repo is removed, any file it shadowed is restored from
+the lower-priority repo on the next `apply`.
+
+**Tools: union with last-repo-wins on name collision.** Tool identity is
+by `name`. All tools from all repos are installed. If the same tool name
+appears in multiple repos, the later repo's definition replaces the
+earlier one entirely (including platform filters and install mappings).
+
+**Hooks: concatenated in repo order.** All hooks from all repos run, in
+repo order, grouped by lifecycle phase (pre-apply, post-apply).
+Platform/machine filtering still applies per hook. Hook names must be
+unique across all repos — duplicates are a config error caught at plan
+time.
+
+**Preferences: per-repo, independent.** Each repo carries its own
+`[preferences]` for its own tools. When resolving a tool, nostos uses
+the preferences from the repo that defines that tool. For tools that
+appear in both repos (later repo wins), the winning repo's preferences
+are used.
+
+### Multi-repo impact on existing commands
+
+**`nostos apply`** iterates repos in order, building unified dotfile and
+tool maps, then applies the merged result. Output is grouped by repo to
+show provenance and shadowing.
+
+**`nostos plan`** shows the unified view with source attribution — which
+repo each file/tool comes from, and whether any files are shadowed.
+
+**`nostos sync`** syncs each repo independently (commit, push, pull) in
+order. Partial failures are reported per-repo; a failure in one repo
+does not prevent syncing the others.
+
+**`nostos status`** shows all repos, their order, and their git status.
+
+**`nostos track`** copies the target file back into the repo that
+currently manages it (per state tracking). If the file is new and not
+managed by any repo, the user is prompted to choose a repo, or the
+lowest-order repo is used as a default.
+
+### State file additions
+
+`state.toml` gains a `[[repo]]` array and a `source` field on applied
+entries. The single-repo schema is a subset of the multi-repo schema
+(one `[[repo]]` entry, no `source` field needed). See
+`architecture.md` for the full schema.
 
 ## Resolved decisions
 
@@ -1362,5 +1537,12 @@ everything back in sync.
   source files per platform/machine, not templates with conditionals).
 
 - **Profiles / tags** — nostos will not support named profiles or
-  tag-based filtering. The base → platform → machine layering model is
-  sufficient for all variation needs.
+  tag-based filtering. The base → platform → machine layering model
+  handles per-machine variation within a repo. Cross-repo variation
+  (e.g., personal vs. work config) is handled by the multi-repo model —
+  each repo is only added on machines where it's needed.
+
+- **Multi-repo model** — all repos are peers in an ordered list with no
+  special "base" vs. "overlay" distinction. `init` is sugar for machine
+  setup + first repo add; subsequent repos use `repo add`. No `--overlay`
+  flag is needed. See [Multi-repo support](#multi-repo-support).
