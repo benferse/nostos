@@ -183,8 +183,8 @@ id = "work-macbook"                    # set at init time
 [applied]
 # Key: target path (with dot), Value: hash + timestamp of last apply
 # Post-MVP: entries gain a `source` field for repo attribution
-".bashrc" = { hash = "sha256:...", timestamp = "2026-04-26T20:00:00Z" }
-".config/starship.toml" = { hash = "sha256:...", timestamp = "2026-04-25T10:30:00Z" }
+".bashrc" = { hash = "sha256:...", timestamp = "2026-04-26T20:00:00Z", source = "dotfiles" }
+".config/starship.toml" = { hash = "sha256:...", timestamp = "2026-04-25T10:30:00Z", source = "work-dotfiles" }
 ```
 
 ## Error handling

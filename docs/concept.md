@@ -865,6 +865,10 @@ id = "work-macbook"
 ".bashrc" = { hash = "sha256:abc123...", timestamp = "2026-04-26T20:00:00Z" }
 ```
 
+When multiple repos are configured, `state.toml` also tracks a
+`[[repo]]` array and per-file source attribution. See
+[State file additions](#state-file-additions).
+
 This identity is matched against `[dotfiles.machines.<name>]` sections
 in `nostos.toml` to apply machine-specific overrides.
 
@@ -1160,8 +1164,10 @@ ignored by git.
 │              Config Parser (TOML)           │
 │         ┌───────────────────────┐           │
 │         │   Layering / Merge    │           │
-│         │  base → platform →    │           │
-│         │      machine          │           │
+│         │  per-repo: base →     │           │
+│         │    platform → machine │           │
+│         │  cross-repo: ordered  │           │
+│         │    merge (post-MVP)   │           │
 │         └───────────────────────┘           │
 ├─────────────────────────────────────────────┤
 │              Reconciler                     │
@@ -1300,6 +1306,9 @@ particular machine and should not roam across devices.
 
 ```toml
 # state.toml (local, not synced)
+[machine]
+id = "work-macbook"
+
 [applied]
 ".bashrc" = { hash = "sha256:abc123...", timestamp = "2026-04-26T20:00:00Z" }
 ".config/starship.toml" = { hash = "sha256:def456...", timestamp = "2026-04-25T10:30:00Z" }
