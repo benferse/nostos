@@ -896,7 +896,7 @@ nostos plan
 # Add a new dotfile to be managed
 nostos track ~/.config/starship.toml
 
-# Sync: commit local changes, pull remote changes, apply
+# Sync: commit local changes, pull remote changes, push, apply
 nostos sync
 
 # Show current machine identity, platform, and detected package managers
@@ -1069,14 +1069,16 @@ nostos plan
 nostos apply
 #   ✓ Installed zoxide via brew
 
-# Commit and push so other machines pick it up
+# Commit, pull, push, then re-apply so other machines pick it up
 nostos sync
 #   Committed: "Add zoxide"
+#   Pulled from origin/main — already up to date
 #   Pushed to origin/main
+#   Applied — no changes
 ```
 
-On your next machine, `nostos sync` (or `nostos apply` after a git pull)
-installs zoxide using whatever package manager is available there.
+On your next machine, `nostos sync` pulls the change and applies it,
+installing zoxide using whatever package manager is available there.
 
 ### Handling a tool with different package names
 
@@ -1166,6 +1168,7 @@ ignored by git.
 │         │   Layering / Merge    │           │
 │         │  per-repo: base →     │           │
 │         │    platform → machine │           │
+│         │    (post-MVP)         │           │
 │         │  cross-repo: ordered  │           │
 │         │    merge (post-MVP)   │           │
 │         └───────────────────────┘           │
@@ -1313,6 +1316,10 @@ id = "work-macbook"
 ".bashrc" = { hash = "sha256:abc123...", timestamp = "2026-04-26T20:00:00Z" }
 ".config/starship.toml" = { hash = "sha256:def456...", timestamp = "2026-04-25T10:30:00Z" }
 ```
+
+When multiple repos are configured, applied entries also include a
+`source` field for repo attribution. See
+[State file additions](#state-file-additions).
 
 On `nostos apply`, for each managed file, there are four possible states:
 
@@ -1485,9 +1492,9 @@ show provenance and shadowing.
 **`nostos plan`** shows the unified view with source attribution — which
 repo each file/tool comes from, and whether any files are shadowed.
 
-**`nostos sync`** syncs each repo independently (commit, push, pull) in
-order. Partial failures are reported per-repo; a failure in one repo
-does not prevent syncing the others.
+**`nostos sync`** syncs each repo independently (commit, pull, push,
+apply) in order. Partial failures are reported per-repo; a failure in
+one repo does not prevent syncing the others.
 
 **`nostos status`** shows all repos, their order, and their git status.
 
