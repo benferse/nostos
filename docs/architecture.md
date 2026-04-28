@@ -43,9 +43,12 @@ src/
 ├── cli/                 ← command-line interface
 │   ├── mod.rs           ← clap app definition
 │   ├── apply.rs         ← nostos apply
+│   ├── init.rs          ← nostos init (post-MVP)
 │   ├── plan.rs          ← nostos plan
 │   ├── repo.rs          ← nostos repo add/remove/list (post-MVP)
-│   └── status.rs        ← nostos status
+│   ├── status.rs        ← nostos status
+│   ├── sync.rs          ← nostos sync (post-MVP)
+│   └── track.rs         ← nostos track (post-MVP)
 ├── config/              ← configuration parsing and merging
 │   ├── mod.rs           ← top-level Config struct
 │   ├── dotfiles.rs      ← dotfile config types
