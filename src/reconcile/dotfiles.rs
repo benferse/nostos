@@ -14,6 +14,7 @@ pub enum DotfileAction {
     CleanUpdate {
         source: PathBuf,
         target: PathBuf,
+        source_hash: String,
     },
     /// Target changed, repo unchanged — warn and skip.
     LocalModification {
@@ -24,11 +25,13 @@ pub enum DotfileAction {
         source: PathBuf,
         target: PathBuf,
         backup: PathBuf,
+        source_hash: String,
     },
     /// Target doesn't exist or is unmanaged — new file to copy.
     NewFile {
         source: PathBuf,
         target: PathBuf,
+        source_hash: String,
     },
 }
 
@@ -132,17 +135,16 @@ pub fn apply(
         match &action {
             DotfileAction::UpToDate { .. } => {}
             DotfileAction::LocalModification { .. } => {}
-            DotfileAction::NewFile { source, target }
-            | DotfileAction::CleanUpdate { source, target } => {
+            DotfileAction::NewFile { source, target, source_hash }
+            | DotfileAction::CleanUpdate { source, target, source_hash } => {
                 if let Err(e) = copy_file(source, target) {
                     report.errors.push(format!("failed to copy to {}: {e}", target.display()));
                     continue;
                 }
-                let hash = hash_file(source).unwrap_or_default();
                 state.applied.insert(
                     dot_path,
                     AppliedEntry {
-                        hash,
+                        hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
                     },
                 );
@@ -151,6 +153,7 @@ pub fn apply(
                 source,
                 target,
                 backup,
+                source_hash,
             } => {
                 // Back up the existing file first
                 if let Err(e) = std::fs::copy(target, backup) {
@@ -164,11 +167,10 @@ pub fn apply(
                     report.errors.push(format!("failed to copy to {}: {e}", target.display()));
                     continue;
                 }
-                let hash = hash_file(source).unwrap_or_default();
                 state.applied.insert(
                     dot_path,
                     AppliedEntry {
-                        hash,
+                        hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
                     },
                 );
@@ -208,6 +210,7 @@ fn classify(
         return Ok(DotfileAction::NewFile {
             source: source.to_path_buf(),
             target: target.to_path_buf(),
+            source_hash,
         });
     }
 
@@ -229,6 +232,7 @@ fn classify(
                     source: source.to_path_buf(),
                     target: target.to_path_buf(),
                     backup: backup_path(target),
+                    source_hash,
                 })
             }
         }
@@ -245,6 +249,7 @@ fn classify(
                 Ok(DotfileAction::CleanUpdate {
                     source: source.to_path_buf(),
                     target: target.to_path_buf(),
+                    source_hash,
                 })
             } else if source_hash == *state_hash && target_hash != *state_hash {
                 // Source unchanged, target edited locally — local modification
@@ -257,6 +262,7 @@ fn classify(
                     source: source.to_path_buf(),
                     target: target.to_path_buf(),
                     backup: backup_path(target),
+                    source_hash,
                 })
             }
         }

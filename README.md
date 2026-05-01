@@ -59,7 +59,7 @@ conflict detection, safe backups, and a simple TOML config.
 
 | Command  | Description                              | Exit codes           |
 |----------|------------------------------------------|----------------------|
-| `status` | Show platform info and config validity   | 0                    |
+| `status` | Show platform info and config validity   | 0, 3, 4 (platform)  |
 | `plan`   | Dry-run showing all planned actions      | 0, 3 (config error)  |
 | `apply`  | Apply dotfiles, save state               | 0, 3, 5 (warnings)   |
 

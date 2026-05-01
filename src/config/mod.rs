@@ -25,10 +25,6 @@ pub enum Error {
         span: miette::SourceOffset,
         msg: String,
     },
-
-    #[error("missing required [dotfiles] section")]
-    #[diagnostic(help("add a [dotfiles] section with `source` and `target` fields"))]
-    MissingDotfiles,
 }
 
 /// Top-level nostos configuration.

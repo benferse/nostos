@@ -16,9 +16,6 @@ pub struct Platform {
 pub enum Error {
     #[error("unsupported operating system")]
     UnsupportedOs,
-
-    #[error("failed to read OS information: {0}")]
-    ReadError(#[source] std::io::Error),
 }
 
 /// Detect the current platform.

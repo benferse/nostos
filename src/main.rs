@@ -12,7 +12,7 @@ fn main() -> ExitCode {
     match nostos::cli::run(cli) {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("Error: {e:?}");
+            eprintln!("Error: {e}");
             ExitCode::from(1)
         }
     }
