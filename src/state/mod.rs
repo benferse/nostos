@@ -59,22 +59,39 @@ impl State {
         self.save_to(&path)
     }
 
-    /// Save state to a specific path using atomic write (write to temp
-    /// file, then rename).
+    /// Save state to a specific path using atomic write.
+    ///
+    /// Writes to a uniquely-named temporary file in the same directory and
+    /// then renames it over `path`. Using a unique temp file (rather than a
+    /// fixed `state.toml.tmp`) prevents two concurrent writers — e.g.,
+    /// nostos invocations running against different repos in parallel shells
+    /// — from clobbering each other's temp data.
     pub fn save_to(&self, path: &Path) -> Result<(), Error> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(Error::Write)?;
-        }
+        use std::io::Write;
+
+        let parent = parent_or_dot(path);
+        std::fs::create_dir_all(parent).map_err(Error::Write)?;
 
         let content = toml::to_string_pretty(self).expect("state should always serialize");
 
-        // Atomic write: write to a temp file in the same directory, then rename
-        let tmp_path = path.with_extension("toml.tmp");
-        std::fs::write(&tmp_path, &content).map_err(Error::Write)?;
-        std::fs::rename(&tmp_path, path).map_err(Error::Write)?;
+        let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(Error::Write)?;
+        tmp.write_all(content.as_bytes()).map_err(Error::Write)?;
+        tmp.persist(path).map_err(|e| Error::Write(e.error))?;
 
         Ok(())
     }
+}
+
+/// Resolve the directory we should place the temp file in.
+///
+/// `Path::parent()` returns `Some("")` for a bare filename like
+/// `state.toml` and `None` for the root, so naive use of the result would
+/// hand `tempfile::NamedTempFile::new_in` an empty path. Fall back to "."
+/// in either case.
+fn parent_or_dot(path: &Path) -> &Path {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 /// Get the default state file path for this platform.
@@ -165,9 +182,16 @@ mod tests {
         let state = State::default();
         state.save_to(&path).expect("save");
 
-        let tmp = path.with_extension("toml.tmp");
-        assert!(!tmp.exists(), "temp file should be cleaned up");
-        assert!(path.exists(), "state file should exist");
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "parent dir should contain only state.toml, got {entries:?}"
+        );
+        assert_eq!(entries[0], "state.toml");
     }
 
     #[test]
@@ -211,5 +235,86 @@ mod tests {
         state.save_to(&path).expect("save");
         let loaded = State::load_from(&path).expect("load");
         assert_eq!(loaded.applied.len(), 50);
+    }
+
+    #[test]
+    fn save_to_bare_filename_uses_current_dir() {
+        // The parent helper must resolve a bare filename to "."; otherwise
+        // NamedTempFile::new_in would fail on an empty path. We verify the
+        // helper directly to avoid mutating process-global cwd.
+        assert_eq!(parent_or_dot(Path::new("state.toml")), Path::new("."));
+        assert_eq!(parent_or_dot(Path::new("./state.toml")), Path::new("."));
+        assert_eq!(parent_or_dot(Path::new("a/state.toml")), Path::new("a"));
+        assert_eq!(parent_or_dot(Path::new("/")), Path::new("."));
+    }
+
+    #[test]
+    fn concurrent_writes_dont_corrupt_state() {
+        // Many threads writing distinct, valid State payloads to the same
+        // path should never leave a half-written or interleaved file. With
+        // unique tempfiles, the file always contains exactly one writer's
+        // payload (last writer wins).
+        use std::sync::{Arc, Barrier};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.toml");
+        const N: usize = 8;
+
+        let barrier = Arc::new(Barrier::new(N));
+        let path = Arc::new(path);
+
+        // Pre-build the expected serialized content for each thread so we can
+        // match the final on-disk file against one of them exactly.
+        let expected_contents: Vec<String> = (0..N)
+            .map(|i| {
+                let mut state = State::default();
+                state.applied.insert(
+                    format!(".file{i}"),
+                    AppliedEntry {
+                        hash: format!("sha256:thread{i}"),
+                        timestamp: chrono::DateTime::parse_from_rfc3339(
+                            "2026-04-26T20:00:00Z",
+                        )
+                        .unwrap()
+                        .with_timezone(&Utc),
+                    },
+                );
+                toml::to_string_pretty(&state).unwrap()
+            })
+            .collect();
+
+        let handles: Vec<_> = (0..N)
+            .map(|i| {
+                let barrier = Arc::clone(&barrier);
+                let path = Arc::clone(&path);
+                let expected = expected_contents[i].clone();
+                std::thread::spawn(move || {
+                    // Reconstruct the same State the expected content was built from.
+                    let state: State = toml::from_str(&expected).unwrap();
+                    barrier.wait();
+                    state.save_to(&path).expect("concurrent save should succeed");
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("worker thread should not panic");
+        }
+
+        // Final file must parse and exactly equal one of the writers' payloads.
+        let final_content = std::fs::read_to_string(path.as_path()).unwrap();
+        let _: State = toml::from_str(&final_content).expect("file should parse");
+        assert!(
+            expected_contents.iter().any(|e| e == &final_content),
+            "final file must match one writer's content exactly; got {final_content:?}"
+        );
+
+        // Parent dir holds only the state file — no leaked tempfiles.
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(entries.len(), 1, "leaked entries: {entries:?}");
+        assert_eq!(entries[0], "state.toml");
     }
 }
