@@ -6,9 +6,21 @@
 cargo build
 cargo test
 cargo test <test_name>    # run a single test
+cargo clippy --all-targets
 ```
 
 Rust edition 2024, minimum toolchain 1.95. See `Cargo.toml` for details.
+
+## Quality gates
+
+After every code change, you **must** actually run:
+
+1. `cargo clippy --all-targets` — fix all warnings before committing.
+2. `cargo test` — confirm all tests pass. Do not assume they pass;
+   run them and check the output.
+
+Do not claim tests pass or clippy is clean without having executed the
+commands in the current state of the working tree.
 
 ## Git conventions
 
