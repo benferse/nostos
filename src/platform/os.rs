@@ -111,7 +111,10 @@ pub fn parse_os_release(content: &str) -> Option<Distro> {
 /// Remove surrounding quotes from a value if present.
 fn unquote(s: &str) -> String {
     let s = s.trim();
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"'))
+            || (s.starts_with('\'') && s.ends_with('\'')))
+    {
         s[1..s.len() - 1].to_string()
     } else {
         s.to_string()
@@ -157,5 +160,13 @@ VERSION_ID="24.04"
         let distro = parse_os_release(content).expect("should parse");
         assert_eq!(distro.id, "fedora");
         assert_eq!(distro.name, "Fedora Linux 40");
+    }
+
+    #[test]
+    fn unquote_single_char_does_not_panic() {
+        // A lone quote character should not panic
+        assert_eq!(unquote("\""), "\"");
+        assert_eq!(unquote("'"), "'");
+        assert_eq!(unquote(""), "");
     }
 }
