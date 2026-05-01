@@ -62,6 +62,9 @@ pub enum Error {
     #[error("dotfile source directory not found: {0}")]
     SourceNotFound(PathBuf),
 
+    #[error("dotfile source path is a symlink (refusing to follow): {0}")]
+    SourceIsSymlink(PathBuf),
+
     #[error("cannot determine home directory for tilde expansion")]
     NoHomeDir,
 
@@ -82,14 +85,13 @@ pub fn plan(
     repo_root: &Path,
 ) -> Result<Report, Error> {
     let source_dir = repo_root.join(&config.source);
-    if !source_dir.is_dir() {
-        return Err(Error::SourceNotFound(source_dir));
-    }
+    check_source_dir(&source_dir)?;
 
     let target_base = expand_tilde(&config.target)?;
     let mut report = Report::default();
 
-    let files = walk_source_dir(&source_dir)?;
+    let (files, skips) = walk_source_dir(&source_dir)?;
+    report.errors.extend(skips);
     for rel_path in files {
         let source = source_dir.join(&rel_path);
         let dot_path = dot_prepend(&rel_path);
@@ -111,14 +113,13 @@ pub fn apply(
     repo_root: &Path,
 ) -> Result<Report, Error> {
     let source_dir = repo_root.join(&config.source);
-    if !source_dir.is_dir() {
-        return Err(Error::SourceNotFound(source_dir));
-    }
+    check_source_dir(&source_dir)?;
 
     let target_base = expand_tilde(&config.target)?;
     let mut report = Report::default();
 
-    let files = walk_source_dir(&source_dir)?;
+    let (files, skips) = walk_source_dir(&source_dir)?;
+    report.errors.extend(skips);
     for rel_path in files {
         let source = source_dir.join(&rel_path);
         let dot_path = dot_prepend(&rel_path);
@@ -269,25 +270,79 @@ fn classify(
     }
 }
 
-/// Recursively walk a directory and return all file paths relative to it.
-fn walk_source_dir(dir: &Path) -> Result<Vec<String>, Error> {
-    let mut files = Vec::new();
-    walk_recursive(dir, dir, &mut files)?;
-    files.sort();
-    Ok(files)
+/// Validate the configured source directory: it must exist, be a real
+/// directory, and not be a symlink itself. Refusing symlinks at the root
+/// matters because `Path::is_dir` follows symlinks, which would otherwise
+/// silently let `dotfiles/` point to an arbitrary location on disk.
+fn check_source_dir(source_dir: &Path) -> Result<(), Error> {
+    // Normalize away any trailing path separator. On Linux, `lstat` (used by
+    // `symlink_metadata`) follows symlinks when the path ends with `/`, so a
+    // configured source like `"dotfiles/"` would defeat the symlink check.
+    // `Path::components` strips trailing separators.
+    let normalized: PathBuf = source_dir.components().collect();
+    let meta = match std::fs::symlink_metadata(&normalized) {
+        Ok(m) => m,
+        Err(_) => return Err(Error::SourceNotFound(normalized)),
+    };
+    if meta.file_type().is_symlink() {
+        return Err(Error::SourceIsSymlink(normalized));
+    }
+    if !meta.is_dir() {
+        return Err(Error::SourceNotFound(normalized));
+    }
+    Ok(())
 }
 
-fn walk_recursive(base: &Path, current: &Path, files: &mut Vec<String>) -> Result<(), Error> {
+/// Recursively walk a directory and return all file paths relative to it,
+/// along with a list of skip messages for any symlinks (or unreadable
+/// entries) encountered. Symlinks are intentionally not followed: a symlink
+/// in the dotfiles tree pointing at, e.g., `/etc/passwd` would otherwise be
+/// dereferenced by `std::fs::copy` and written into the user's home as a
+/// regular file.
+fn walk_source_dir(dir: &Path) -> Result<(Vec<String>, Vec<String>), Error> {
+    let mut files = Vec::new();
+    let mut skips = Vec::new();
+    walk_recursive(dir, dir, &mut files, &mut skips)?;
+    files.sort();
+    skips.sort();
+    Ok((files, skips))
+}
+
+fn walk_recursive(
+    base: &Path,
+    current: &Path,
+    files: &mut Vec<String>,
+    skips: &mut Vec<String>,
+) -> Result<(), Error> {
     let entries =
         std::fs::read_dir(current).map_err(|e| Error::ReadDir(current.to_path_buf(), e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| Error::ReadDir(current.to_path_buf(), e))?;
         let path = entry.path();
+        let display_rel = path
+            .strip_prefix(base)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| path.display().to_string());
 
-        if path.is_dir() {
-            walk_recursive(base, &path, files)?;
-        } else if path.is_file()
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(e) => {
+                skips.push(format!(
+                    "skipping {display_rel}: cannot read file type: {e}"
+                ));
+                continue;
+            }
+        };
+
+        if file_type.is_symlink() {
+            skips.push(format!("skipping symlink in source: {display_rel}"));
+            continue;
+        }
+
+        if file_type.is_dir() {
+            walk_recursive(base, &path, files, skips)?;
+        } else if file_type.is_file()
             && let Ok(rel) = path.strip_prefix(base)
         {
             files.push(rel.to_string_lossy().to_string());
@@ -804,6 +859,109 @@ mod tests {
         let home = dirs::home_dir().expect("home dir should exist in test");
         assert_eq!(result, home.join("Documents"));
     }
+
+    // ── Symlink tests (Unix only) ──────────────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn plan_skips_file_symlink_in_source() {
+        use std::os::unix::fs::symlink;
+
+        let repo = TestRepo::new();
+        // Create a file outside the dotfiles tree, then symlink it from inside.
+        let outside = repo._dir.path().join("secret.txt");
+        fs::write(&outside, "SECRET").unwrap();
+        symlink(&outside, repo.repo_root.join("dotfiles/sneaky")).unwrap();
+
+        let state = State::default();
+        let config = repo.config();
+        let report = plan(&config, &state, &repo.repo_root).unwrap();
+
+        assert!(report.actions.is_empty(), "no actions for symlinked source");
+        assert!(
+            report.errors.iter().any(|e| e.contains("symlink") && e.contains("sneaky")),
+            "expected a symlink-skip error, got {:?}",
+            report.errors
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_skips_file_symlink_and_does_not_copy_target() {
+        use std::os::unix::fs::symlink;
+
+        let repo = TestRepo::new();
+        let outside = repo._dir.path().join("secret.txt");
+        fs::write(&outside, "SECRET").unwrap();
+        symlink(&outside, repo.repo_root.join("dotfiles/sneaky")).unwrap();
+
+        let mut state = State::default();
+        let config = repo.config();
+        let report = apply(&config, &mut state, &repo.repo_root).unwrap();
+
+        assert!(report.actions.is_empty());
+        assert!(report.errors.iter().any(|e| e.contains("symlink")));
+        assert!(
+            !repo.target_exists(".sneaky"),
+            "symlink contents must not be copied into the target tree"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_does_not_descend_into_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let repo = TestRepo::new();
+        // Build a real directory outside the source, then symlink it in.
+        let outside_dir = repo._dir.path().join("outside_dir");
+        fs::create_dir_all(&outside_dir).unwrap();
+        fs::write(outside_dir.join("hidden.conf"), "do not copy").unwrap();
+        symlink(&outside_dir, repo.repo_root.join("dotfiles/linked")).unwrap();
+        // Also a real file alongside, to confirm normal traversal still works.
+        repo.add_source("normal", "normal content");
+
+        let state = State::default();
+        let config = repo.config();
+        let report = plan(&config, &state, &repo.repo_root).unwrap();
+
+        // Only the real file should produce an action.
+        assert_eq!(report.actions.len(), 1);
+        match &report.actions[0] {
+            DotfileAction::NewFile { target, .. } => assert!(target.ends_with(".normal")),
+            other => panic!("unexpected action: {other:?}"),
+        }
+        assert!(report.errors.iter().any(|e| e.contains("symlink") && e.contains("linked")));
+        // The file inside the linked dir must not surface as an action.
+        assert!(
+            !report.actions.iter().any(|a| matches!(a, DotfileAction::NewFile { source, .. } if source.ends_with("hidden.conf"))),
+            "must not descend into a directory symlink"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn plan_rejects_source_dir_that_is_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let repo = TestRepo::new();
+        // Replace the existing dotfiles dir with a symlink to a real dir.
+        let real = repo._dir.path().join("real_dotfiles");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("bashrc"), "# bash").unwrap();
+        fs::remove_dir_all(repo.repo_root.join("dotfiles")).unwrap();
+        symlink(&real, repo.repo_root.join("dotfiles")).unwrap();
+
+        let state = State::default();
+        let config = repo.config();
+        let result = plan(&config, &state, &repo.repo_root);
+        assert!(
+            matches!(result, Err(Error::SourceIsSymlink(_))),
+            "expected SourceIsSymlink, got {result:?}"
+        );
+    }
+
+    // ── Hash streaming tests ───────────────────────────────
 
     #[test]
     fn hash_file_streaming_matches_one_shot_on_large_input() {
