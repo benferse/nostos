@@ -320,10 +320,22 @@ fn expand_tilde(path: &str) -> Result<PathBuf, Error> {
 }
 
 /// Hash a file's contents using SHA-256, returning `sha256:<hex>`.
+///
+/// Streams the file through the hasher with a fixed-size buffer so that large
+/// files do not cause RSS to grow proportionally to file size.
 fn hash_file(path: &Path) -> Result<String, std::io::Error> {
-    let content = std::fs::read(path)?;
-    let digest = Sha256::digest(&content);
-    Ok(format!("sha256:{:x}", digest))
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
 /// Generate a backup path for a conflicting file.
@@ -791,5 +803,33 @@ mod tests {
         let result = expand_tilde("~/Documents").unwrap();
         let home = dirs::home_dir().expect("home dir should exist in test");
         assert_eq!(result, home.join("Documents"));
+    }
+
+    #[test]
+    fn hash_file_streaming_matches_one_shot_on_large_input() {
+        // 64 KiB + 123 bytes deliberately straddles the 8 KiB read buffer with
+        // a partial final read, exercising the EOF path in hash_file.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("big.bin");
+        let mut content = Vec::with_capacity(64 * 1024 + 123);
+        for i in 0..(64 * 1024 + 123) {
+            content.push((i % 256) as u8);
+        }
+        fs::write(&path, &content).unwrap();
+
+        let streamed = hash_file(&path).unwrap();
+        let expected = format!("sha256:{:x}", Sha256::digest(&content));
+        assert_eq!(streamed, expected);
+    }
+
+    #[test]
+    fn hash_file_handles_empty_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("empty.bin");
+        fs::write(&path, b"").unwrap();
+
+        let hashed = hash_file(&path).unwrap();
+        let expected = format!("sha256:{:x}", Sha256::digest([]));
+        assert_eq!(hashed, expected);
     }
 }
