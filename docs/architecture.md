@@ -23,14 +23,15 @@ works end-to-end.
 
 **Deferred to post-MVP:**
 - Tool resolver and installer registry
+  - Per-distro installer preferences
 - Hook executor
 - Platform/machine layering and overrides
+  - Dotfile platform overrides (`[dotfiles.platforms.*]`)
+  - Machine-specific dotfile overrides (`[dotfiles.machines.*]`)
 - `nostos init` (git clone via libgit2)
 - `nostos sync` (commit/push/pull)
 - `nostos track` (reverse sync)
 - `[files]` section (verbatim copy)
-- Per-distro installer preferences
-- Machine-specific dotfile overrides
 - Multi-repo support (`repo add`/`remove`/`list`, unified merge across
   repos, `[[repo]]` state tracking — see concept.md)
 
@@ -72,8 +73,11 @@ src/
 
 ## Config schema
 
-Canonical definition of `nostos.toml`. All fields, types, and
-optionality in one place.
+Canonical definition of `nostos.toml`. This is the **complete target
+schema** — features marked `post-MVP` are parsed but rejected with a
+diagnostic until their module is implemented. The
+[MVP-active subset](#mvp-active-config-subset) below summarises what
+the first build acts on.
 
 ```toml
 # ── Dotfiles ─────────────────────────────────────────────
@@ -82,22 +86,24 @@ optionality in one place.
 source = "dotfiles/"                    # required, path relative to repo root
 target = "~"                            # required, target directory
 
-# Platform-specific overrides. Keys are repo-relative paths (without
-# leading dot). Values are alternate source paths.
+# post-MVP: platform-specific overrides (requires platform/machine layering)
+# Keys are repo-relative paths (without leading dot).
+# Values are alternate source paths.
 [dotfiles.platforms.<platform>]         # optional, platform = macos|linux|windows
 "<target-path>" = "<source-path>"
 
-# Machine-specific overrides. Same key/value format as platform overrides.
+# post-MVP: machine-specific overrides (requires platform/machine layering)
+# Same key/value format as platform overrides.
 [dotfiles.machines.<machine-id>]        # optional
 "<target-path>" = "<source-path>"
 
-# ── Files (verbatim copy, no dot-prepend) ────────────────
+# ── Files (verbatim copy, no dot-prepend) ── post-MVP ────
 
 [files]
 source = "files/"                       # required
 target = "~"                            # required
 
-# ── Hooks ────────────────────────────────────────────────
+# ── Hooks ── post-MVP ────────────────────────────────────
 
 [[hook]]
 name = "install-homebrew"               # required, unique identifier
@@ -106,7 +112,7 @@ when = "pre-apply"                      # required, "pre-apply" or "post-apply"
 platforms = ["macos"]                   # optional, default: all platforms
 machines = ["work-macbook"]             # optional, default: all machines
 
-# ── Installer preferences ───────────────────────────────
+# ── Installer preferences ── post-MVP ────────────────────
 
 [preferences.<platform>]               # platform = macos|windows
 installer-priority = ["brew", "cargo"] # required, ordered list
@@ -117,13 +123,23 @@ installer-priority = ["apt", "cargo"]  # required, ordered list
 [preferences.linux]                    # fallback for unrecognized distros
 installer-priority = ["cargo"]         # required, ordered list
 
-# ── Tools ────────────────────────────────────────────────
+# ── Tools ── post-MVP ────────────────────────────────────
 
 [[tool]]
 name = "ripgrep"                       # required, also the default package name
 install.<manager> = "<package-name>"   # optional, overrides default for a manager
 platforms = ["linux"]                  # optional, default: all platforms
 ```
+
+### MVP-active config subset
+
+The MVP config parser accepts the full schema above but only the
+following sections drive behaviour in the first build:
+
+| Section | MVP behaviour |
+|---------|---------------|
+| `[dotfiles]` (source, target) | Copy-based placement with dot-prepend |
+| Everything else | Rejected with a diagnostic ("not yet supported") |
 
 ### Field types
 
@@ -185,9 +201,12 @@ id = "work-macbook"                    # set at init time
 
 [applied]
 # Key: target path (with dot), Value: hash + timestamp of last apply
+".bashrc" = { hash = "sha256:...", timestamp = "2026-04-26T20:00:00Z" }
+".config/starship.toml" = { hash = "sha256:...", timestamp = "2026-04-25T10:30:00Z" }
+
 # Post-MVP: entries gain a `source` field for repo attribution
-".bashrc" = { hash = "sha256:...", timestamp = "2026-04-26T20:00:00Z", source = "dotfiles" }
-".config/starship.toml" = { hash = "sha256:...", timestamp = "2026-04-25T10:30:00Z", source = "work-dotfiles" }
+# ".bashrc" = { hash = "sha256:...", timestamp = "...", source = "dotfiles" }
+# ".config/starship.toml" = { hash = "sha256:...", timestamp = "...", source = "work-dotfiles" }
 ```
 
 ## Error handling
