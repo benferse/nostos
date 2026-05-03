@@ -226,19 +226,25 @@ has the same name across all package managers, you don't need to spell out
 every installer:
 
 ```toml
-# Simple case: same name everywhere, nostos uses whatever's available
+# Simple case: binary name matches tool name; bin defaults to "jq"
+[[tool]]
+name = "jq"
+
+# Binary name differs from package name — declare bin explicitly
 [[tool]]
 name = "ripgrep"
+bin = "rg"
 
-# Override only where the name differs
+# Override only where the package name differs across managers
 [[tool]]
 name = "fd"
 install.apt = "fd-find"
 install.cargo = "fd-find"
 
-# Cargo-only tool — no platform mapping needed
+# Cargo-only tool with detectable binary
 [[tool]]
 name = "cargo-edit"
+bin = "cargo-add"          # binary produced by cargo-edit
 install.cargo = "cargo-edit"
 
 # Platform-specific tool — only install on Linux
@@ -247,21 +253,32 @@ name = "build-essential"
 install.apt = "build-essential"
 platforms = ["linux"]
 
-# Complex case: full control
+# Complex case: full control with binary detection
 [[tool]]
 name = "neovim"
+bin = "nvim"               # binary name differs from package name
 install.brew = "neovim"
 install.apt = "neovim"
 install.winget = "Neovim.Neovim"
 install.pacman = "neovim"
 install.choco = "neovim"
+
+# Script-installed tool — available via brew on macOS, custom script elsewhere
+[[tool]]
+name = "zed"
+bin = "zed"
+install.brew = "zed"
+install.script = "hooks/install-zed.sh"
+platforms = ["linux", "macos"]
 ```
 
 **Pros:**
-- Best ergonomics — the simple case (`ripgrep`) is one line
+- Best ergonomics — the simple case (`jq`) is one line
 - Overrides only where needed — no boilerplate for well-named packages
 - Still fully explicit when names diverge
 - `platforms` field naturally limits where a tool is relevant
+- `bin` field enables universal presence detection, independent of how the tool was installed
+- `install.script` provides a first-class path for tools that need a custom installer
 
 **Cons:**
 - "Same name everywhere" is an implicit assumption — if it's wrong on some
@@ -322,11 +339,85 @@ tries `cargo install cargo-edit` (explicit), which succeeds. The failed
 brew attempt is harmless — the resolver moves on to the next manager in
 the priority list.
 
-**Open question:** Should nostos suppress output for failed fallback
-attempts and only surface the final result? Or should it provide an
-`explicit-only` flag on tools to skip the implicit fallback entirely?
-This decision can be deferred until the resolver is implemented and the
-real-world noise level is known.
+**Presence detection with `bin`:**
+
+The optional `bin` field declares the name of the binary a tool produces.
+Before attempting any installation, nostos checks whether the binary is
+on `PATH`:
+
+```toml
+[[tool]]
+name = "ripgrep"
+bin = "rg"            # binary name differs from the package name "ripgrep"
+
+[[tool]]
+name = "neovim"
+bin = "nvim"          # binary name differs from the package name "neovim"
+
+[[tool]]
+name = "zoxide"
+# bin omitted — defaults to the tool name ("zoxide")
+```
+
+If the binary is found on `PATH`, nostos marks the tool as **already
+installed** and skips the resolver entirely — regardless of which package
+manager (or manual process) originally installed it. This handles the
+"installed by other means" case gracefully and eliminates redundant
+install attempts on subsequent runs.
+
+**Default:** when `bin` is omitted, the tool name is used as the binary
+name. This is the right default for most CLI tools where the binary
+matches the package name. For tools where the names differ (like
+`ripgrep` → `rg`, `neovim` → `nvim`, or `cargo-edit` → `cargo-add`),
+the `bin` field makes the difference explicit.
+
+**Multiple binaries:** some tools install multiple binaries (e.g.,
+`rustup` installs `rustup`, `rustc`, and `cargo`). nostos checks a
+single binary — choose the most representative one. If the primary
+binary is present on `PATH`, the tool is considered installed.
+
+**Non-binary tools:** shell functions like `nvm` cannot be detected via
+`PATH` presence. These are better handled as hooks, where the script
+includes its own idempotency check (e.g., `if ! [ -d ~/.nvm ]`).
+
+**Force reinstall:** running `nostos apply --force` bypasses the `bin`
+check and reinstalls the tool regardless of whether the binary is
+already present on `PATH`.
+
+**Script-based install with `install.script`:**
+
+Some tools are not available in any package manager on certain platforms
+but can be installed via a custom script (a vendor installer, a
+curl-pipe-sh, a GitHub Release download, etc.). The `install.script`
+strategy lets these tools participate in the resolver rather than
+requiring a separate hook:
+
+```toml
+[[tool]]
+name = "zed"
+bin = "zed"
+install.brew = "zed"                       # via brew on macOS
+install.script = "hooks/install-zed.sh"   # script fallback on other platforms
+platforms = ["linux", "macos"]
+```
+
+The script at `hooks/install-zed.sh` is the install action itself — it
+does not need to check for presence, because the resolver only runs
+`install.script` when `bin` is not already on `PATH`. `install.script`
+is tried after all package managers in `installer-priority` have been
+exhausted or are unavailable for this tool.
+
+`install.script` requires a `bin` field. Without `bin`, nostos has no
+way to detect whether the script already did its work, so repeated
+`nostos apply` runs would re-execute the script every time.
+
+**Open question resolved:** The earlier question about an `explicit-only`
+flag for suppressing fallback noise (e.g., `brew install cargo-edit`
+failing before `cargo install cargo-edit` succeeds) is superseded by
+`bin`. Once a tool is installed (detected via `bin`), the resolver is
+never reached again. The noise only occurs on initial install, and only
+for managers that don't have the tool. This is an acceptable trade-off;
+the `explicit-only` flag is no longer needed.
 
 ### Configuration file format
 
@@ -711,6 +802,23 @@ if ! command -v lazygit >/dev/null 2>&1; then
 fi
 ```
 
+> **Note:** lazygit produces a detectable binary, so it is better expressed
+> as a `[[tool]]` with `install.script` rather than a hook. This lets the
+> resolver handle presence detection via `bin` — no `if ! command -v` check
+> needed in the script itself:
+>
+> ```toml
+> [[tool]]
+> name = "lazygit"
+> bin = "lazygit"
+> install.script = "hooks/install-lazygit.sh"
+> platforms = ["linux"]
+> ```
+>
+> Use a hook for tools that have no detectable binary, require interactive
+> input, or perform one-time system setup (see the
+> [When to use hooks vs. tools](#when-to-use-hooks-vs-tools) table).
+
 #### Hook properties
 
 - **Idempotency is the script's responsibility** — nostos runs hooks
@@ -736,8 +844,9 @@ fi
 |-----------|-----|
 | Tool available in a package manager | `[[tool]]` — declarative |
 | Tool available via `cargo install`, `go install`, `pip install` | `[[tool]]` with appropriate install strategy |
-| Tool only available as a GitHub Release binary | Hook script |
-| Tool requires a curl-pipe-sh installer (rustup, nvm) | Hook script |
+| Tool installed via a custom script, produces a detectable binary | `[[tool]]` with `install.script` and `bin` |
+| Tool only available as a GitHub Release binary, produces a detectable binary | `[[tool]]` with `install.script` and `bin` |
+| Tool requires a curl-pipe-sh installer but produces no detectable binary (nvm) | Hook script |
 | One-time system setup (SSH agent, font installation) | Hook script |
 | Anything requiring interactive input or complex logic | Hook script |
 
@@ -1023,6 +1132,7 @@ installer-priority = ["winget", "scoop", "cargo"]
 
 [[tool]]
 name = "ripgrep"
+bin = "rg"
 
 [[tool]]
 name = "fd"
@@ -1037,6 +1147,7 @@ name = "bat"
 
 [[tool]]
 name = "cargo-edit"
+bin = "cargo-add"
 install.cargo = "cargo-edit"
 
 [[tool]]
@@ -1130,10 +1241,10 @@ nostos plan
 #   Files:
 #     bin/git-cleanup                  — up to date
 #   Tools:
-#     ripgrep                          — installed (brew)
+#     ripgrep    (bin: rg)             — already installed
 #     fd                               — not installed, would install via apt
 #     zoxide                           — not installed, would install via apt
-#     build-essential                   — installed (apt)
+#     build-essential                  — not installed, would install via apt
 ```
 
 ### Machine-specific overrides
@@ -1214,7 +1325,10 @@ Key components:
 - **Tool Resolver** — takes a logical tool definition (name + install
   strategies) and resolves it to a concrete install action for the current
   machine, based on which package managers are available and the user's
-  preference order.
+  preference order. Before attempting installation, the resolver checks
+  whether the tool's `bin` is already on `PATH` — if so, installation is
+  skipped entirely. `install.script` is tried as a final fallback after
+  all package managers in `installer-priority` have been exhausted.
 
 - **Installer Registry** — a set of adapters, one per package manager.
   Each adapter knows how to: check if a package is already installed,
@@ -1553,3 +1667,21 @@ entries. The single-repo schema is a subset of the multi-repo schema
   special "base" vs. "overlay" distinction. `init` is sugar for machine
   setup + first repo add; subsequent repos use `repo add`. No `--overlay`
   flag is needed. See [Multi-repo support](#multi-repo-support).
+
+- **Tool presence detection** — tools declare their binary via an optional
+  `bin` field. The resolver checks `PATH` for this binary before attempting
+  any installation; if found, the tool is considered installed regardless of
+  how it was placed there. `bin` defaults to the tool name. Tools that
+  produce no detectable binary (meta-packages, shell functions) rely on the
+  package manager's own idempotency. Running `nostos apply --force` bypasses
+  the `bin` check. Multiple binaries are not supported — specify the most
+  representative one.
+
+- **Script-based install strategy** — tools that require a custom installer
+  script (vendor installers, GitHub Release downloads) can use
+  `install.script = "<path>"` rather than a separate hook. The resolver
+  runs the script as a final fallback after all package managers in
+  `installer-priority` are exhausted. `install.script` requires a `bin`
+  field so the resolver can detect whether the script has already run.
+  Tools with no detectable binary, no-op side effects, or complex setup
+  logic remain better suited to hooks.
