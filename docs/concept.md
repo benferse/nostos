@@ -1242,10 +1242,14 @@ nostos plan
 #     bin/git-cleanup                  — up to date
 #   Tools:
 #     ripgrep    (bin: rg)             — already installed
+#     neovim     (bin: nvim)           — already installed
 #     fd                               — not installed, would install via apt
 #     zoxide                           — not installed, would install via apt
-#     build-essential                  — not installed, would install via apt
 ```
+
+Tools with a `bin` field show the binary name in parentheses. "Already
+installed" means the binary was found on `PATH`; "not installed" means
+the binary was not found and nostos will run the resolver on `apply`.
 
 ### Machine-specific overrides
 

@@ -160,7 +160,7 @@ following sections drive behaviour in the first build:
 | `tool.name` | string | yes | — |
 | `tool.bin` | string | no | tool name |
 | `tool.install.*` | string | no | tool name |
-| `tool.install.script` | string (path) | no | — |
+| `tool.install.script` | string (path) | no | — (requires `bin`) |
 | `tool.platforms` | array of strings | no | all platforms |
 
 ## Dependencies
