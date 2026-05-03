@@ -66,6 +66,14 @@ conflict detection, safe backups, and a simple TOML config.
 Exit code 5 means some files were skipped (local modifications detected)
 but other files were applied successfully.
 
+## Why "nostos"?
+
+The name comes from the Ancient Greek *νόστος* (nostos), meaning
+"homecoming" — the safe return home after a long journey. It's the root
+of the word *nostalgia* and a central theme in the Odyssey. A fitting
+name for a tool that brings your configuration safely home, no matter
+where you are.
+
 ## Building from source
 
 Requires Rust 1.95+ (edition 2024).
