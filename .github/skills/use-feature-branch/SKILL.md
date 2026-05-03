@@ -64,8 +64,8 @@ on the current branch:
   switching branches.
 - **Keep branch names concise.** Aim for 3–5 words max in the
   description slug.
-- **Use the git tool** for all git operations (status, commit, branch,
-  checkout).
+- **Use bash with git commands** for all git operations (status,
+  commit, branch, checkout).
 - **Sign all commits** with `git commit -S` per repo conventions.
 - **Include the Co-authored-by trailer** on any commits made by this
   skill.
