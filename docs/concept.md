@@ -1255,9 +1255,11 @@ nostos plan
 ```
 
 Tools with a `bin` that differs from the tool name show the binary in
-parentheses. "Already installed" means the binary was found on `PATH`;
-"not installed" means the binary was not found and nostos will run the
-resolver on `apply`.
+parentheses. "Already installed" means the binary was found on `PATH`
+— this replaces the older per-manager tracking format (`installed (brew)`,
+`installed (apt)`). nostos no longer needs to know which manager
+installed the tool, only whether the binary is present. "Not installed"
+means the binary was not found and nostos will run the resolver on `apply`.
 
 ### Machine-specific overrides
 
