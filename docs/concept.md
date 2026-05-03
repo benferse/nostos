@@ -244,7 +244,7 @@ install.cargo = "fd-find"
 # Cargo-only tool with detectable binary
 [[tool]]
 name = "cargo-edit"
-bin = "cargo-add"          # binary produced by cargo-edit
+bin = "cargo-add"          # cargo-edit installs cargo-add, cargo-rm, cargo-upgrade
 install.cargo = "cargo-edit"
 
 # Platform-specific tool — only install on Linux
@@ -788,9 +788,12 @@ if ! command -v rustup >/dev/null 2>&1; then
 fi
 ```
 
+The following illustrates the old pattern, where presence detection was
+managed inside the script with a manual `command -v` guard:
+
 ```shell
 #!/bin/sh
-# hooks/install-lazygit.sh
+# hooks/install-lazygit.sh (old pattern — see note below for the preferred approach)
 if ! command -v lazygit >/dev/null 2>&1; then
     LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" \
         | grep -Po '"tag_name": "v\K[^"]*')
@@ -802,10 +805,10 @@ if ! command -v lazygit >/dev/null 2>&1; then
 fi
 ```
 
-> **Note:** lazygit produces a detectable binary, so it is better expressed
-> as a `[[tool]]` with `install.script` rather than a hook. This lets the
-> resolver handle presence detection via `bin` — no `if ! command -v` check
-> needed in the script itself:
+> **Preferred approach:** lazygit produces a detectable binary, so it is
+> better expressed as a `[[tool]]` with `install.script` rather than a hook.
+> The resolver handles presence detection via `bin` — no `if ! command -v`
+> guard needed in the script itself:
 >
 > ```toml
 > [[tool]]
