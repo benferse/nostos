@@ -1135,6 +1135,10 @@ name = "ripgrep"
 bin = "rg"
 
 [[tool]]
+name = "neovim"
+bin = "nvim"
+
+[[tool]]
 name = "fd"
 install.apt = "fd-find"
 install.cargo = "fd-find"
@@ -1247,9 +1251,10 @@ nostos plan
 #     zoxide                           — not installed, would install via apt
 ```
 
-Tools with a `bin` field show the binary name in parentheses. "Already
-installed" means the binary was found on `PATH`; "not installed" means
-the binary was not found and nostos will run the resolver on `apply`.
+Tools with a `bin` that differs from the tool name show the binary in
+parentheses. "Already installed" means the binary was found on `PATH`;
+"not installed" means the binary was not found and nostos will run the
+resolver on `apply`.
 
 ### Machine-specific overrides
 
