@@ -1,8 +1,9 @@
 use crate::config;
 use crate::platform;
+use std::path::Path;
 use std::process::ExitCode;
 
-pub fn run() -> anyhow::Result<ExitCode> {
+pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
     // Platform detection
     match platform::detect() {
         Ok(platform) => {
@@ -15,7 +16,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     }
 
     // Config validity
-    match config::find_config() {
+    match config::find_config_with_repo(repo) {
         Ok((_path, config)) => {
             if let Some(df) = &config.dotfiles {
                 println!("Config:   nostos.toml (valid)");

@@ -46,8 +46,6 @@ pub struct Config {
 }
 
 /// Find and load `nostos.toml` in the current directory.
-///
-/// This is isolated behind a helper so adding `--repo` later is trivial.
 pub fn find_config() -> Result<(PathBuf, Config), Error> {
     let path = PathBuf::from("nostos.toml");
     if !path.exists() {
@@ -57,6 +55,34 @@ pub fn find_config() -> Result<(PathBuf, Config), Error> {
     }
     let config = load(&path)?;
     Ok((path, config))
+}
+
+/// Find config with resolution order: explicit path > state-stored path > current directory.
+pub fn find_config_with_repo(explicit_repo: Option<&Path>) -> Result<(PathBuf, Config), Error> {
+    // 1. Explicit --repo flag
+    if let Some(repo_path) = explicit_repo {
+        let config_path = repo_path.join("nostos.toml");
+        if !config_path.exists() {
+            return Err(Error::NotFound {
+                path: config_path.display().to_string(),
+            });
+        }
+        return load(&config_path).map(|c| (config_path, c));
+    }
+
+    // 2. State-stored repo path
+    if let Ok(state) = crate::state::State::load() {
+        if let Some(repo_path_str) = state.repo_path() {
+            let repo_path = PathBuf::from(repo_path_str);
+            let config_path = repo_path.join("nostos.toml");
+            if config_path.exists() {
+                return load(&config_path).map(|c| (config_path, c));
+            }
+        }
+    }
+
+    // 3. Current directory (existing behavior)
+    find_config()
 }
 
 /// Load and parse a nostos config from the given path.
