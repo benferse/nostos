@@ -1,6 +1,8 @@
 mod os;
+pub mod packages;
 
 pub use os::{Arch, Distro, Os};
+pub use packages::PackageManager;
 
 /// Detected platform information.
 #[derive(Debug, Clone)]
@@ -8,6 +10,7 @@ pub struct Platform {
     pub os: Os,
     pub arch: Arch,
     pub distro: Option<Distro>,
+    pub managers: Vec<PackageManager>,
 }
 
 /// Errors that can occur during platform detection.
@@ -28,7 +31,9 @@ pub fn detect() -> Result<Platform, Error> {
         None
     };
 
-    Ok(Platform { os, arch, distro })
+    let managers = packages::discover();
+
+    Ok(Platform { os, arch, distro, managers })
 }
 
 impl std::fmt::Display for Platform {
