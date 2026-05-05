@@ -29,11 +29,10 @@ pub enum Command {
 
 /// Run the CLI. Returns an ExitCode.
 pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
-    // TODO: use cli.repo once --repo support is wired through
-    let _repo = cli.repo.as_deref();
+    let repo = cli.repo.as_deref();
     match cli.command {
-        Command::Status => status::run(),
-        Command::Plan => plan::run(),
-        Command::Apply => apply::run(),
+        Command::Status => status::run(repo),
+        Command::Plan => plan::run(repo),
+        Command::Apply => apply::run(repo),
     }
 }

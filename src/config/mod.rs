@@ -71,13 +71,13 @@ pub fn find_config_with_repo(explicit_repo: Option<&Path>) -> Result<(PathBuf, C
     }
 
     // 2. State-stored repo path
-    if let Ok(state) = crate::state::State::load() {
-        if let Some(repo_path_str) = state.repo_path() {
-            let repo_path = PathBuf::from(repo_path_str);
-            let config_path = repo_path.join("nostos.toml");
-            if config_path.exists() {
-                return load(&config_path).map(|c| (config_path, c));
-            }
+    if let Ok(state) = crate::state::State::load()
+        && let Some(repo_path_str) = state.repo_path()
+    {
+        let repo_path = PathBuf::from(repo_path_str);
+        let config_path = repo_path.join("nostos.toml");
+        if config_path.exists() {
+            return load(&config_path).map(|c| (config_path, c));
         }
     }
 

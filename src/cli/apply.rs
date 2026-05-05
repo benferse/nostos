@@ -1,10 +1,11 @@
 use crate::config;
 use crate::reconcile::{self, dotfiles::DotfileAction};
 use crate::state::State;
+use std::path::Path;
 use std::process::ExitCode;
 
-pub fn run() -> anyhow::Result<ExitCode> {
-    let (_path, cfg) = match config::find_config() {
+pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
+    let (config_path, cfg) = match config::find_config_with_repo(repo) {
         Ok(result) => result,
         Err(e) => {
             eprintln!("{e}");
@@ -13,7 +14,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
     };
 
     let mut state = State::load().unwrap_or_default();
-    let repo_root = std::env::current_dir()?;
+    let repo_root = config_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().expect("cannot determine repo root"));
 
     let report = match reconcile::apply(&cfg, &mut state, &repo_root) {
         Ok(r) => r,
@@ -63,6 +67,11 @@ pub fn run() -> anyhow::Result<ExitCode> {
         if let Some(ref reason) = phase.skipped_reason {
             println!("⚠ {reason}");
         }
+    }
+
+    // Store repo path in state if not already set
+    if state.repo_path().is_none() {
+        state.set_repo_path(repo_root.to_string_lossy().to_string());
     }
 
     // Save updated state
