@@ -85,6 +85,18 @@ pub fn find_config_with_repo(explicit_repo: Option<&Path>) -> Result<(PathBuf, C
     find_config()
 }
 
+/// Derive the repo root directory from a config file path.
+///
+/// Falls back to the current working directory when the config path is a
+/// bare filename (e.g. `"nostos.toml"`) whose `.parent()` is empty.
+pub fn repo_root_from_config(config_path: &Path) -> PathBuf {
+    config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().expect("cannot determine repo root"))
+}
+
 /// Load and parse a nostos config from the given path.
 pub fn load(path: &Path) -> Result<Config, Error> {
     let content = std::fs::read_to_string(path).map_err(|e| Error::ReadError {

@@ -14,10 +14,7 @@ pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
     };
 
     let state = State::load().unwrap_or_default();
-    let repo_root = config_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::current_dir().expect("cannot determine repo root"));
+    let repo_root = config::repo_root_from_config(&config_path);
 
     let report = match reconcile::plan(&cfg, &state, &repo_root) {
         Ok(r) => r,
