@@ -427,4 +427,26 @@ mod tests {
         assert_eq!(config.tools.len(), 3);
         assert_eq!(config.hooks.len(), 2);
     }
+
+    #[test]
+    fn repo_root_from_bare_filename_uses_cwd() {
+        let path = Path::new("nostos.toml");
+        let root = repo_root_from_config(path);
+        assert!(!root.as_os_str().is_empty(), "should not be empty");
+        assert!(root.is_absolute(), "should fall back to absolute cwd");
+    }
+
+    #[test]
+    fn repo_root_from_absolute_path() {
+        let path = Path::new("/home/user/dotfiles/nostos.toml");
+        let root = repo_root_from_config(path);
+        assert_eq!(root, Path::new("/home/user/dotfiles"));
+    }
+
+    #[test]
+    fn repo_root_from_relative_path_with_dir() {
+        let path = Path::new("my-repo/nostos.toml");
+        let root = repo_root_from_config(path);
+        assert_eq!(root, Path::new("my-repo"));
+    }
 }
