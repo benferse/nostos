@@ -127,7 +127,9 @@ installer-priority = ["cargo"]         # required, ordered list
 
 [[tool]]
 name = "ripgrep"                       # required, also the default package name
+bin = "rg"                             # optional, binary to check for presence; defaults to name
 install.<manager> = "<package-name>"   # optional, overrides default for a manager
+install.script = "hooks/install.sh"    # optional, fallback installer script (requires bin)
 platforms = ["linux"]                  # optional, default: all platforms
 ```
 
@@ -156,7 +158,9 @@ following sections drive behaviour in the first build:
 | `hook.machines` | array of strings | no | all machines |
 | `preferences.*.installer-priority` | array of strings | yes | — |
 | `tool.name` | string | yes | — |
+| `tool.bin` | string | no | tool name |
 | `tool.install.*` | string | no | tool name |
+| `tool.install.script` | string (path) | no | — (requires `bin`) |
 | `tool.platforms` | array of strings | no | all platforms |
 
 ## Dependencies
