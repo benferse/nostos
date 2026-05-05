@@ -13,6 +13,7 @@ pub struct Cli {
     pub command: Command,
 }
 
+/// A top-level subcommand.
 #[derive(Subcommand)]
 pub enum Command {
     /// Show platform info and config validity

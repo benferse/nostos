@@ -5,8 +5,11 @@ pub use os::{Arch, Distro, Os};
 /// Detected platform information.
 #[derive(Debug, Clone)]
 pub struct Platform {
+    /// Operating system running on this machine.
     pub os: Os,
+    /// CPU instruction set architecture.
     pub arch: Arch,
+    /// Linux distribution details; `None` on non-Linux platforms.
     pub distro: Option<Distro>,
 }
 
@@ -14,6 +17,7 @@ pub struct Platform {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// The current operating system is not supported by nostos.
     #[error("unsupported operating system")]
     UnsupportedOs,
 }

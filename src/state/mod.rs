@@ -23,15 +23,19 @@ pub struct AppliedEntry {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// The state file could not be read from disk.
     #[error("failed to read state file: {0}")]
     Read(#[source] std::io::Error),
 
+    /// The state file contains invalid TOML.
     #[error("failed to parse state file")]
     Parse(#[source] toml::de::Error),
 
+    /// The state file could not be written to disk.
     #[error("failed to write state file: {0}")]
     Write(#[source] std::io::Error),
 
+    /// The platform config directory could not be determined.
     #[error("cannot determine config directory for state file")]
     NoConfigDir,
 }
