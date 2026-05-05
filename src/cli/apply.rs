@@ -14,6 +14,7 @@ pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
     };
 
     let mut state = State::load().unwrap_or_default();
+    state.ensure_machine_identity();
     let repo_root = config_path
         .parent()
         .map(|p| p.to_path_buf())
