@@ -10,9 +10,11 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum Error {
+    /// The config file does not exist at the expected path.
     #[error("config file not found: {path}")]
     NotFound { path: String },
 
+    /// The config file exists but could not be read from disk.
     #[error("failed to read config file: {path}")]
     ReadError {
         path: String,
@@ -20,6 +22,7 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    /// The config file contains invalid TOML or unknown fields.
     #[error("failed to parse nostos.toml")]
     #[diagnostic(help("check TOML syntax at the indicated location"))]
     ParseError {
@@ -35,6 +38,8 @@ pub enum Error {
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Dotfiles sync configuration (`[dotfiles]` table).  `None` when the
+    /// section is absent from the config file.
     pub dotfiles: Option<dotfiles::DotfilesConfig>,
     #[serde(default, rename = "tool")]
     pub tools: Vec<tools::ToolConfig>,

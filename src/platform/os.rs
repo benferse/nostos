@@ -3,16 +3,22 @@ use super::Error;
 /// Operating system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Os {
+    /// GNU/Linux.
     Linux,
+    /// Apple macOS.
     MacOs,
+    /// Microsoft Windows.
     Windows,
 }
 
 /// CPU architecture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Arch {
+    /// 64-bit x86 (amd64).
     X86_64,
+    /// 64-bit ARM (arm64).
     Aarch64,
+    /// Any other architecture, identified by its Rust target string.
     Other(String),
 }
 

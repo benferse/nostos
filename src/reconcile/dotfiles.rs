@@ -38,6 +38,7 @@ pub enum DotfileAction {
 /// Outcome of reconciliation.
 #[derive(Debug, Default)]
 pub struct Report {
+    /// Per-file actions determined (or executed) during reconciliation.
     pub actions: Vec<DotfileAction>,
     /// Errors that occurred for individual files (non-fatal).
     pub errors: Vec<String>,
@@ -59,21 +60,27 @@ impl Report {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// The configured source directory does not exist.
     #[error("dotfile source directory not found: {0}")]
     SourceNotFound(PathBuf),
 
+    /// The source path is a symlink; nostos refuses to follow it.
     #[error("dotfile source path is a symlink (refusing to follow): {0}")]
     SourceIsSymlink(PathBuf),
 
+    /// The home directory could not be determined for tilde expansion.
     #[error("cannot determine home directory for tilde expansion")]
     NoHomeDir,
 
+    /// A directory entry in the source tree could not be read.
     #[error("failed to read directory {0}: {1}")]
     ReadDir(PathBuf, #[source] std::io::Error),
 
+    /// A file could not be copied to its target location.
     #[error("failed to copy file to {0}: {1}")]
     FileCopy(PathBuf, #[source] std::io::Error),
 
+    /// A required parent directory could not be created.
     #[error("failed to create directory {0}: {1}")]
     CreateDir(PathBuf, #[source] std::io::Error),
 }

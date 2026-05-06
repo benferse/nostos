@@ -1,3 +1,4 @@
+/// Dotfile reconciliation logic.
 pub mod dotfiles;
 
 use crate::config::Config;
