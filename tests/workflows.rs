@@ -20,9 +20,9 @@ impl Workflow {
     }
 
     fn write_config(&self) {
+        let target = self.dir.path().join("home").to_string_lossy().to_string();
         let config = format!(
-            "[dotfiles]\nsource = \"dotfiles/\"\ntarget = \"{}\"\n",
-            self.dir.path().join("home").to_string_lossy()
+            "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n",
         );
         fs::write(self.dir.path().join("nostos.toml"), config).unwrap();
     }
