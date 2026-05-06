@@ -140,8 +140,20 @@ fn parent_or_dot(path: &Path) -> &Path {
 }
 
 /// Get the default state file path for this platform.
+///
+/// Checks `XDG_CONFIG_HOME` first (standard on Linux, also useful for test
+/// isolation on macOS where `dirs::config_dir()` ignores it), then falls
+/// back to the platform config directory.
 fn default_state_path() -> Result<PathBuf, Error> {
-    let config_dir = dirs::config_dir().ok_or(Error::NoConfigDir)?;
+    let config_dir = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| dirs::config_dir().unwrap_or_default());
+
+    if config_dir.as_os_str().is_empty() {
+        return Err(Error::NoConfigDir);
+    }
+
     Ok(config_dir.join("nostos").join("state.toml"))
 }
 
