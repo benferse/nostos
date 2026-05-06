@@ -76,7 +76,28 @@ impl State {
 
         let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(Error::Write)?;
         tmp.write_all(content.as_bytes()).map_err(Error::Write)?;
-        tmp.persist(path).map_err(|e| Error::Write(e.error))?;
+        #[cfg(windows)]
+        {
+            let mut attempts = 0;
+            loop {
+                match tmp.persist(path) {
+                    Ok(_) => break,
+                    Err(e)
+                        if attempts < 5
+                            && e.error.kind() == std::io::ErrorKind::PermissionDenied =>
+                    {
+                        attempts += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        tmp = e.file;
+                    }
+                    Err(e) => return Err(Error::Write(e.error)),
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            tmp.persist(path).map_err(|e| Error::Write(e.error))?;
+        }
 
         Ok(())
     }
