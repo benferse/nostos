@@ -25,7 +25,7 @@ impl TestFixture {
     fn with_default_config(self) -> Self {
         let target = self.target_dir().to_string_lossy().to_string();
         self.with_config(&format!(
-            "[dotfiles]\nsource = \"dotfiles/\"\ntarget = \"{target}\"\n"
+            "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n"
         ))
     }
 
@@ -317,7 +317,7 @@ fn plan_with_tools_shows_not_yet_implemented() {
     let config = format!(
         r#"[dotfiles]
 source = "dotfiles/"
-target = "{target}"
+target = '{target}'
 
 [[tool]]
 name = "ripgrep"
@@ -350,7 +350,7 @@ fn plan_with_hooks_shows_not_yet_implemented() {
     let config = format!(
         r#"[dotfiles]
 source = "dotfiles/"
-target = "{target}"
+target = '{target}'
 
 [[hook]]
 name = "setup"
