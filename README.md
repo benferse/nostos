@@ -3,6 +3,14 @@
 A cross-platform dev environment sync tool. Manage your dotfiles with
 conflict detection, safe backups, and a simple TOML config.
 
+## Installation
+
+```shell
+cargo install --path .
+```
+
+Requires Rust 1.95+ (edition 2024).
+
 ## Quick start
 
 1. Create a repo with a `dotfiles/` directory containing your config files
@@ -24,12 +32,25 @@ conflict detection, safe backups, and a simple TOML config.
    [dotfiles]
    source = "dotfiles/"
    target = "~"
+
+   # Declare tools you need — not yet installed by nostos, but the config
+   # is validated now and will "just work" when tool installation ships.
+   [[tool]]
+   name = "ripgrep"
+   bin = "rg"
+   install.brew = "ripgrep"
+   install.apt = "ripgrep"
+
+   [[hook]]
+   name = "post-setup"
+   run = "scripts/post-apply.sh"
+   when = "post-apply"
    ```
 
-3. Run nostos from within the repo:
+3. Run nostos:
 
    ```shell
-   # Check platform info and config validity
+   # Check platform info, available package managers, and config validity
    nostos status
 
    # Preview what would happen (dry run)
@@ -37,6 +58,13 @@ conflict detection, safe backups, and a simple TOML config.
 
    # Apply dotfiles to your home directory
    nostos apply
+   ```
+
+   After the first `apply`, nostos remembers your repo location. You can
+   run commands from anywhere, or use `--repo <path>` to override:
+
+   ```shell
+   nostos --repo ~/dotfiles plan
    ```
 
 ## How it works
@@ -57,14 +85,26 @@ conflict detection, safe backups, and a simple TOML config.
 
 ## Commands
 
-| Command  | Description                              | Exit codes           |
-|----------|------------------------------------------|----------------------|
-| `status` | Show platform info and config validity   | 0, 3, 4 (platform)  |
-| `plan`   | Dry-run showing all planned actions      | 0, 3 (config error)  |
-| `apply`  | Apply dotfiles, save state               | 0, 3, 5 (warnings)   |
+| Command  | Description                                        | Exit codes           |
+|----------|----------------------------------------------------|----------------------|
+| `status` | Platform, managers, machine identity, config check | 0, 3, 4 (platform)  |
+| `plan`   | Dry-run showing all planned actions                | 0, 3 (config error)  |
+| `apply`  | Apply dotfiles, save state                         | 0, 3, 5 (warnings)   |
 
 Exit code 5 means some files were skipped (local modifications detected)
 but other files were applied successfully.
+
+### Global flags
+
+| Flag            | Description                                      |
+|-----------------|--------------------------------------------------|
+| `--repo <path>` | Override the repo/config location                |
+
+### Repo resolution order
+
+1. `--repo` flag (explicit)
+2. Path stored in state from a previous `apply`
+3. Current working directory
 
 ## Why "nostos"?
 
@@ -83,6 +123,22 @@ cargo build
 cargo test
 cargo clippy --all-targets
 ```
+
+## Status
+
+**v0.1.0** — Reliable dotfile management with forward-compatible config.
+
+What works today:
+- Dotfile sync with conflict detection and safe backups
+- Full config schema validation (tools, hooks, files, preferences)
+- Cross-platform (Linux, macOS, Windows)
+- Package manager discovery
+- Machine identity and repo path tracking
+
+Coming next:
+- Tool installation (the config schema is already validated)
+- Hook execution
+- `nostos init` / `nostos sync` (git operations)
 
 ## License
 

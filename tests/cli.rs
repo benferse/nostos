@@ -234,3 +234,180 @@ fn no_subcommand_shows_help() {
         .code(2)
         .stderr(predicate::str::contains("Usage"));
 }
+
+// ── --repo flag tests ────────────────────────────────────
+
+#[test]
+fn apply_with_repo_flag() {
+    let fixture = TestFixture::new().with_default_config();
+    fixture.add_source("bashrc", "# bash config");
+
+    // Run from a different directory using --repo
+    let other_dir = TempDir::new().unwrap();
+    let mut cmd = Command::cargo_bin("nostos").unwrap();
+    cmd.env(
+        "XDG_CONFIG_HOME",
+        fixture.dir.path().join("xdg-config").to_str().unwrap(),
+    );
+    cmd.arg("--repo")
+        .arg(fixture.dir.path())
+        .arg("apply")
+        .current_dir(other_dir.path())
+        .assert()
+        .success();
+
+    // Verify file was placed
+    assert!(fixture.target_dir().join(".bashrc").exists());
+}
+
+#[test]
+fn plan_with_repo_flag() {
+    let fixture = TestFixture::new().with_default_config();
+    fixture.add_source("bashrc", "# bash config");
+
+    let other_dir = TempDir::new().unwrap();
+    let mut cmd = Command::cargo_bin("nostos").unwrap();
+    cmd.env(
+        "XDG_CONFIG_HOME",
+        fixture.dir.path().join("xdg-config").to_str().unwrap(),
+    );
+    cmd.arg("--repo")
+        .arg(fixture.dir.path())
+        .arg("plan")
+        .current_dir(other_dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("new file"));
+}
+
+#[test]
+fn status_with_repo_flag() {
+    let fixture = TestFixture::new().with_default_config();
+
+    let other_dir = TempDir::new().unwrap();
+    let mut cmd = Command::cargo_bin("nostos").unwrap();
+    cmd.env(
+        "XDG_CONFIG_HOME",
+        fixture.dir.path().join("xdg-config").to_str().unwrap(),
+    );
+    cmd.arg("--repo")
+        .arg(fixture.dir.path())
+        .arg("status")
+        .current_dir(other_dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("valid"));
+}
+
+#[test]
+fn repo_flag_nonexistent_path() {
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .arg("--repo")
+        .arg("/nonexistent/path/xyz")
+        .arg("plan")
+        .assert()
+        .failure();
+}
+
+#[test]
+fn plan_with_tools_shows_not_yet_implemented() {
+    let fixture = TestFixture::new();
+    let target = fixture.target_dir().to_string_lossy().to_string();
+    let config = format!(
+        r#"[dotfiles]
+source = "dotfiles/"
+target = "{target}"
+
+[[tool]]
+name = "ripgrep"
+bin = "rg"
+
+[[tool]]
+name = "fd"
+install.apt = "fd-find"
+"#
+    );
+    fs::write(fixture.dir.path().join("nostos.toml"), config).unwrap();
+    fixture.add_source("bashrc", "# config");
+
+    let mut cmd = Command::cargo_bin("nostos").unwrap();
+    cmd.env(
+        "XDG_CONFIG_HOME",
+        fixture.dir.path().join("xdg-config").to_str().unwrap(),
+    );
+    cmd.arg("plan")
+        .current_dir(fixture.dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 tool(s) declared but tool installation is not yet implemented"));
+}
+
+#[test]
+fn plan_with_hooks_shows_not_yet_implemented() {
+    let fixture = TestFixture::new();
+    let target = fixture.target_dir().to_string_lossy().to_string();
+    let config = format!(
+        r#"[dotfiles]
+source = "dotfiles/"
+target = "{target}"
+
+[[hook]]
+name = "setup"
+run = "hooks/setup.sh"
+when = "pre-apply"
+"#
+    );
+    fs::write(fixture.dir.path().join("nostos.toml"), config).unwrap();
+    fixture.add_source("bashrc", "# config");
+
+    let mut cmd = Command::cargo_bin("nostos").unwrap();
+    cmd.env(
+        "XDG_CONFIG_HOME",
+        fixture.dir.path().join("xdg-config").to_str().unwrap(),
+    );
+    cmd.arg("plan")
+        .current_dir(fixture.dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hook execution is not yet implemented"));
+}
+
+#[test]
+fn status_shows_platform_and_managers() {
+    let fixture = TestFixture::new().with_default_config();
+
+    let mut cmd = Command::cargo_bin("nostos").unwrap();
+    cmd.env(
+        "XDG_CONFIG_HOME",
+        fixture.dir.path().join("xdg-config").to_str().unwrap(),
+    );
+    cmd.arg("status")
+        .current_dir(fixture.dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Platform:"))
+        .stdout(predicate::str::contains("Managers:"));
+}
+
+#[test]
+fn config_only_tools_no_dotfiles_is_valid() {
+    let fixture = TestFixture::new();
+    let config = r#"
+[[tool]]
+name = "ripgrep"
+bin = "rg"
+"#;
+    fs::write(fixture.dir.path().join("nostos.toml"), config).unwrap();
+
+    let mut cmd = Command::cargo_bin("nostos").unwrap();
+    cmd.env(
+        "XDG_CONFIG_HOME",
+        fixture.dir.path().join("xdg-config").to_str().unwrap(),
+    );
+    cmd.arg("plan")
+        .current_dir(fixture.dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tool(s) declared"));
+}

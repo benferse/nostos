@@ -9,6 +9,10 @@ use std::process::ExitCode;
 #[derive(Parser)]
 #[command(name = "nostos", about = "Welcome home, hero", version)]
 pub struct Cli {
+    /// Path to the nostos repo (overrides stored path and current directory)
+    #[arg(long, global = true)]
+    pub repo: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -25,9 +29,10 @@ pub enum Command {
 
 /// Run the CLI. Returns an ExitCode.
 pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
+    let repo = cli.repo.as_deref();
     match cli.command {
-        Command::Status => status::run(),
-        Command::Plan => plan::run(),
-        Command::Apply => apply::run(),
+        Command::Status => status::run(repo),
+        Command::Plan => plan::run(repo),
+        Command::Apply => apply::run(repo),
     }
 }

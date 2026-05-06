@@ -1,4 +1,8 @@
 pub mod dotfiles;
+pub mod files;
+pub mod hooks;
+pub mod preferences;
+pub mod tools;
 
 use std::path::{Path, PathBuf};
 
@@ -32,11 +36,16 @@ pub enum Error {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub dotfiles: Option<dotfiles::DotfilesConfig>,
+    #[serde(default, rename = "tool")]
+    pub tools: Vec<tools::ToolConfig>,
+    #[serde(default, rename = "hook")]
+    pub hooks: Vec<hooks::HookConfig>,
+    pub files: Option<files::FilesConfig>,
+    #[serde(default)]
+    pub preferences: Option<preferences::PreferencesConfig>,
 }
 
 /// Find and load `nostos.toml` in the current directory.
-///
-/// This is isolated behind a helper so adding `--repo` later is trivial.
 pub fn find_config() -> Result<(PathBuf, Config), Error> {
     let path = PathBuf::from("nostos.toml");
     if !path.exists() {
@@ -46,6 +55,46 @@ pub fn find_config() -> Result<(PathBuf, Config), Error> {
     }
     let config = load(&path)?;
     Ok((path, config))
+}
+
+/// Find config with resolution order: explicit path > state-stored path > current directory.
+pub fn find_config_with_repo(explicit_repo: Option<&Path>) -> Result<(PathBuf, Config), Error> {
+    // 1. Explicit --repo flag
+    if let Some(repo_path) = explicit_repo {
+        let config_path = repo_path.join("nostos.toml");
+        if !config_path.exists() {
+            return Err(Error::NotFound {
+                path: config_path.display().to_string(),
+            });
+        }
+        return load(&config_path).map(|c| (config_path, c));
+    }
+
+    // 2. State-stored repo path
+    if let Ok(state) = crate::state::State::load()
+        && let Some(repo_path_str) = state.repo_path()
+    {
+        let repo_path = PathBuf::from(repo_path_str);
+        let config_path = repo_path.join("nostos.toml");
+        if config_path.exists() {
+            return load(&config_path).map(|c| (config_path, c));
+        }
+    }
+
+    // 3. Current directory (existing behavior)
+    find_config()
+}
+
+/// Derive the repo root directory from a config file path.
+///
+/// Falls back to the current working directory when the config path is a
+/// bare filename (e.g. `"nostos.toml"`) whose `.parent()` is empty.
+pub fn repo_root_from_config(config_path: &Path) -> PathBuf {
+    config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().expect("cannot determine repo root"))
 }
 
 /// Load and parse a nostos config from the given path.
@@ -194,5 +243,210 @@ mod tests {
         let df = config.dotfiles.expect("dotfiles present");
         assert_eq!(df.source, "");
         assert_eq!(df.target, "");
+    }
+
+    #[test]
+    fn config_with_tools() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [[tool]]
+            name = "ripgrep"
+            bin = "rg"
+
+            [[tool]]
+            name = "fd"
+            install.apt = "fd-find"
+            install.cargo = "fd-find"
+            platforms = ["linux"]
+            "#,
+        )
+        .expect("should parse");
+        assert_eq!(config.tools.len(), 2);
+        assert_eq!(config.tools[0].name, "ripgrep");
+        assert_eq!(config.tools[0].bin.as_deref(), Some("rg"));
+        assert_eq!(config.tools[1].install.get("apt").unwrap(), "fd-find");
+        assert_eq!(config.tools[1].platforms, vec!["linux"]);
+    }
+
+    #[test]
+    fn config_with_hooks() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [[hook]]
+            name = "install-homebrew"
+            run = "hooks/install-homebrew.sh"
+            when = "pre-apply"
+            platforms = ["macos"]
+            "#,
+        )
+        .expect("should parse");
+        assert_eq!(config.hooks.len(), 1);
+        assert_eq!(config.hooks[0].name, "install-homebrew");
+        assert_eq!(config.hooks[0].when, hooks::HookWhen::PreApply);
+    }
+
+    #[test]
+    fn config_with_files_section() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [files]
+            source = "files/"
+            target = "~"
+            "#,
+        )
+        .expect("should parse");
+        let files = config.files.expect("files should be present");
+        assert_eq!(files.source, "files/");
+    }
+
+    #[test]
+    fn config_with_preferences() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [preferences.macos]
+            installer-priority = ["brew", "cargo"]
+
+            [preferences.linux.ubuntu]
+            installer-priority = ["apt", "cargo"]
+            "#,
+        )
+        .expect("should parse");
+        let prefs = config.preferences.expect("preferences present");
+        let macos = prefs.macos.expect("macos prefs");
+        assert_eq!(macos.installer_priority, vec!["brew", "cargo"]);
+    }
+
+    #[test]
+    fn tool_missing_name() {
+        let result = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [[tool]]
+            bin = "rg"
+            "#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn hook_invalid_when() {
+        let result = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [[hook]]
+            name = "test"
+            run = "hooks/test.sh"
+            when = "during-apply"
+            "#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn hook_missing_required_fields() {
+        let result = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [[hook]]
+            name = "test"
+            "#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn full_realistic_config() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [preferences.macos]
+            installer-priority = ["brew", "cargo"]
+
+            [preferences.windows]
+            installer-priority = ["winget", "scoop", "cargo"]
+
+            [preferences.linux.ubuntu]
+            installer-priority = ["apt", "cargo"]
+
+            [[tool]]
+            name = "ripgrep"
+            bin = "rg"
+
+            [[tool]]
+            name = "fd"
+            install.apt = "fd-find"
+            install.cargo = "fd-find"
+
+            [[tool]]
+            name = "cargo-edit"
+            bin = "cargo-add"
+            install.cargo = "cargo-edit"
+
+            [[hook]]
+            name = "install-homebrew"
+            run = "hooks/install-homebrew.sh"
+            when = "pre-apply"
+            platforms = ["macos"]
+
+            [[hook]]
+            name = "setup-ssh"
+            run = "hooks/setup-ssh.sh"
+            when = "post-apply"
+            platforms = ["linux", "macos"]
+            "#,
+        )
+        .expect("should parse full config");
+        assert_eq!(config.tools.len(), 3);
+        assert_eq!(config.hooks.len(), 2);
+    }
+
+    #[test]
+    fn repo_root_from_bare_filename_uses_cwd() {
+        let path = Path::new("nostos.toml");
+        let root = repo_root_from_config(path);
+        assert!(!root.as_os_str().is_empty(), "should not be empty");
+        assert!(root.is_absolute(), "should fall back to absolute cwd");
+    }
+
+    #[test]
+    fn repo_root_from_absolute_path() {
+        let path = Path::new("/home/user/dotfiles/nostos.toml");
+        let root = repo_root_from_config(path);
+        assert_eq!(root, Path::new("/home/user/dotfiles"));
+    }
+
+    #[test]
+    fn repo_root_from_relative_path_with_dir() {
+        let path = Path::new("my-repo/nostos.toml");
+        let root = repo_root_from_config(path);
+        assert_eq!(root, Path::new("my-repo"));
     }
 }

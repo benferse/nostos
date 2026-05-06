@@ -1,13 +1,35 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Machine identity information.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MachineInfo {
+    /// Machine identifier (hostname by default, or user-assigned).
+    pub id: String,
+}
+
+/// Repository location information.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RepoInfo {
+    /// Absolute path to the repository root on this machine.
+    pub path: String,
+}
+
 /// Local state tracking what nostos has applied on this machine.
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct State {
+    /// Machine identity.
+    #[serde(default)]
+    pub machine: Option<MachineInfo>,
+
     /// Per-file tracking of applied hashes and timestamps.
     /// Keys are target-relative paths with dot prepended (e.g., ".bashrc").
     #[serde(default)]
     pub applied: BTreeMap<String, AppliedEntry>,
+
+    /// Location of the dotfiles repository on this machine.
+    #[serde(default)]
+    pub repo: Option<RepoInfo>,
 }
 
 /// Record of a single applied dotfile.
@@ -37,6 +59,29 @@ pub enum Error {
 }
 
 impl State {
+    /// Ensure machine identity is set. If not already present, detect from hostname.
+    pub fn ensure_machine_identity(&mut self) {
+        if self.machine.is_none() {
+            let id = detect_hostname().unwrap_or_else(|| "unknown".to_string());
+            self.machine = Some(MachineInfo { id });
+        }
+    }
+
+    /// Get the machine ID, if set.
+    pub fn machine_id(&self) -> Option<&str> {
+        self.machine.as_ref().map(|m| m.id.as_str())
+    }
+
+    /// Get the stored repo path, if any.
+    pub fn repo_path(&self) -> Option<&str> {
+        self.repo.as_ref().map(|r| r.path.as_str())
+    }
+
+    /// Set the repo path. Used on first apply to remember where the repo is.
+    pub fn set_repo_path(&mut self, path: String) {
+        self.repo = Some(RepoInfo { path });
+    }
+
     /// Load state from the platform-appropriate location.
     pub fn load() -> Result<Self, Error> {
         let path = default_state_path()?;
@@ -116,9 +161,52 @@ fn parent_or_dot(path: &Path) -> &Path {
 }
 
 /// Get the default state file path for this platform.
+///
+/// Checks `XDG_CONFIG_HOME` first (standard on Linux, also useful for test
+/// isolation on macOS where `dirs::config_dir()` ignores it), then falls
+/// back to the platform config directory.
 fn default_state_path() -> Result<PathBuf, Error> {
-    let config_dir = dirs::config_dir().ok_or(Error::NoConfigDir)?;
+    let config_dir = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| dirs::config_dir().unwrap_or_default());
+
+    if config_dir.as_os_str().is_empty() {
+        return Err(Error::NoConfigDir);
+    }
+
     Ok(config_dir.join("nostos").join("state.toml"))
+}
+
+/// Detect the system hostname.
+fn detect_hostname() -> Option<String> {
+    // Try HOSTNAME env var first (common on Linux)
+    if let Ok(h) = std::env::var("HOSTNAME")
+        && !h.is_empty()
+    {
+        return Some(h);
+    }
+
+    // Try COMPUTERNAME on Windows
+    if let Ok(h) = std::env::var("COMPUTERNAME")
+        && !h.is_empty()
+    {
+        return Some(h);
+    }
+
+    hostname_from_command()
+}
+
+fn hostname_from_command() -> Option<String> {
+    use std::process::Command;
+    let output = Command::new("hostname").output().ok()?;
+    if output.status.success() {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -337,5 +425,97 @@ mod tests {
             .collect();
         assert_eq!(entries.len(), 1, "leaked entries: {entries:?}");
         assert_eq!(entries[0], "state.toml");
+    }
+
+    #[test]
+    fn state_with_machine_identity_roundtrips() {
+        let state = State {
+            machine: Some(MachineInfo {
+                id: "work-macbook".to_string(),
+            }),
+            applied: BTreeMap::new(),
+            repo: None,
+        };
+        let serialized = toml::to_string_pretty(&state).unwrap();
+        let deserialized: State = toml::from_str(&serialized).unwrap();
+        assert_eq!(state, deserialized);
+    }
+
+    #[test]
+    fn state_without_machine_loads_as_none() {
+        let state: State = toml::from_str("[applied]\n").unwrap();
+        assert!(state.machine.is_none());
+    }
+
+    #[test]
+    fn ensure_machine_identity_sets_id() {
+        let mut state = State::default();
+        assert!(state.machine.is_none());
+        state.ensure_machine_identity();
+        assert!(state.machine.is_some());
+        assert!(!state.machine.as_ref().unwrap().id.is_empty());
+    }
+
+    #[test]
+    fn ensure_machine_identity_preserves_existing() {
+        let mut state = State {
+            machine: Some(MachineInfo {
+                id: "my-machine".to_string(),
+            }),
+            applied: BTreeMap::new(),
+            repo: None,
+        };
+        state.ensure_machine_identity();
+        assert_eq!(state.machine_id(), Some("my-machine"));
+    }
+
+    #[test]
+    fn legacy_state_without_machine_section() {
+        // Old state files from before machine identity was added should still load
+        let toml_str = r#"
+[applied]
+".bashrc" = { hash = "sha256:abc123", timestamp = "2026-04-26T20:00:00Z" }
+"#;
+        let state: State = toml::from_str(toml_str).unwrap();
+        assert!(state.machine.is_none());
+        assert_eq!(state.applied.len(), 1);
+    }
+
+    #[test]
+    fn state_with_repo_path_roundtrips() {
+        let state = State {
+            repo: Some(RepoInfo {
+                path: "/home/user/dotfiles".to_string(),
+            }),
+            ..Default::default()
+        };
+        let serialized = toml::to_string_pretty(&state).unwrap();
+        let deserialized: State = toml::from_str(&serialized).unwrap();
+        assert_eq!(state.repo, deserialized.repo);
+    }
+
+    #[test]
+    fn state_without_repo_loads_as_none() {
+        let state: State = toml::from_str("[applied]\n").unwrap();
+        assert!(state.repo.is_none());
+    }
+
+    #[test]
+    fn set_repo_path_stores_path() {
+        let mut state = State::default();
+        assert!(state.repo_path().is_none());
+        state.set_repo_path("/home/user/dotfiles".to_string());
+        assert_eq!(state.repo_path(), Some("/home/user/dotfiles"));
+    }
+
+    #[test]
+    fn legacy_state_without_repo_section() {
+        let toml_str = r#"
+[applied]
+".bashrc" = { hash = "sha256:abc123", timestamp = "2026-04-26T20:00:00Z" }
+"#;
+        let state: State = toml::from_str(toml_str).unwrap();
+        assert!(state.repo.is_none());
+        assert_eq!(state.applied.len(), 1);
     }
 }
