@@ -265,7 +265,35 @@ fn workflow_mixed_state_batch() {
     );
 }
 
-// ── Workflow 6: Nested directory creation ────────────────
+// ── Workflow 6: Pre-existing directory with content ──────
+
+#[test]
+fn workflow_preexisting_directory_preserved() {
+    let w = Workflow::new();
+    w.write_config();
+
+    // Simulate a host where ~/.config already exists with user content
+    w.edit_target(".config/existing-app/settings.json", r#"{"theme":"dark"}"#);
+    w.edit_target(".config/other.conf", "keep me");
+
+    // Dotfiles repo adds config/foo → .config/foo
+    w.add_source("config/foo/bar.toml", "new dotfile");
+
+    // Apply should succeed
+    w.nostos().arg("apply").assert().success();
+
+    // New dotfile was placed
+    assert_eq!(w.read_target(".config/foo/bar.toml"), "new dotfile");
+
+    // Pre-existing content is untouched
+    assert_eq!(
+        w.read_target(".config/existing-app/settings.json"),
+        r#"{"theme":"dark"}"#,
+    );
+    assert_eq!(w.read_target(".config/other.conf"), "keep me");
+}
+
+// ── Workflow 7: Nested directory creation ────────────────
 
 #[test]
 fn workflow_nested_directory_creation() {

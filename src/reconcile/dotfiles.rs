@@ -841,6 +841,32 @@ mod tests {
     }
 
     #[test]
+    fn apply_preserves_existing_directory_contents() {
+        let repo = TestRepo::new();
+
+        // Pre-populate the target with existing content in .config/
+        repo.add_target(".config/existing-app/settings.json", r#"{"theme":"dark"}"#);
+        repo.add_target(".config/other.conf", "existing config");
+
+        // Source repo wants to place config/foo/bar.toml → .config/foo/bar.toml
+        repo.add_source("config/foo/bar.toml", "new dotfile content");
+        let mut state = State::default();
+        let config = repo.config();
+
+        apply(&config, &mut state, &repo.repo_root).unwrap();
+
+        // New file was placed correctly
+        assert_eq!(repo.read_target(".config/foo/bar.toml"), "new dotfile content");
+
+        // Pre-existing content is untouched
+        assert_eq!(
+            repo.read_target(".config/existing-app/settings.json"),
+            r#"{"theme":"dark"}"#,
+        );
+        assert_eq!(repo.read_target(".config/other.conf"), "existing config");
+    }
+
+    #[test]
     fn dot_prepend_convention() {
         assert_eq!(dot_prepend("bashrc"), ".bashrc");
         assert_eq!(dot_prepend("config/starship.toml"), ".config/starship.toml");
