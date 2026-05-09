@@ -30,7 +30,7 @@ pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
             println!("Dotfiles: nothing to do (source directory is empty)");
         } else {
             println!("Dotfiles:");
-            print_file_actions(&dotfiles_report.actions);
+            print_actions(&dotfiles_report.actions);
             for err in &dotfiles_report.errors {
                 eprintln!("  ⚠ {err}");
             }
@@ -43,7 +43,7 @@ pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
             println!("Files: nothing to do (source directory is empty)");
         } else {
             println!("Files:");
-            print_file_actions(&files_report.actions);
+            print_actions(&files_report.actions);
             for err in &files_report.errors {
                 eprintln!("  ⚠ {err}");
             }
@@ -66,7 +66,7 @@ fn display_target(path: &std::path::Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn print_file_actions(actions: &[DotfileAction]) {
+fn print_actions(actions: &[DotfileAction]) {
     for action in actions {
         match action {
             DotfileAction::NewFile { target, .. } => {

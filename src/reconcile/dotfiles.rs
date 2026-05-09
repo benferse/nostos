@@ -3,6 +3,9 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// What needs to happen for a single file (dotfile or verbatim).
+///
+/// Despite the name, this enum is used for both `[dotfiles]` (with
+/// dot-prepend) and `[files]` (verbatim copy) reconciliation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DotfileAction {
     /// Source and target match — nothing to do.
