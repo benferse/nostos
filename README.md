@@ -1,5 +1,9 @@
 # nostos
 
+> [!WARNING]
+> **Pre-release software:** nostos is still in active development.
+> Use at your own risk for now.
+
 A cross-platform dev environment sync tool. Manage your dotfiles with
 conflict detection, safe backups, and a simple TOML config.
 
