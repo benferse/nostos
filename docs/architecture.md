@@ -25,9 +25,7 @@ works end-to-end.
 - Tool resolver and installer registry
   - Per-distro installer preferences
 - Hook executor
-- Platform/machine layering and overrides
-  - Dotfile platform overrides (`[dotfiles.platforms.*]`)
-  - Machine-specific dotfile overrides (`[dotfiles.machines.*]`)
+- Platform/machine layering for hooks and tools
 - `nostos init` (git clone via libgit2)
 - `nostos sync` (commit/push/pull)
 - `nostos track` (reverse sync)
@@ -53,10 +51,12 @@ src/
 ├── config/              ← configuration parsing and merging
 │   ├── mod.rs           ← top-level Config struct
 │   ├── dotfiles.rs      ← dotfile config types
+│   ├── files.rs         ← files config types
 │   ├── tools.rs         ← tool config types
 │   └── hooks.rs         ← hook config types
 ├── reconcile/           ← applying desired state to the machine
 │   ├── mod.rs           ← reconciler orchestration
+│   ├── filemap.rs       ← file map builder (base → platform → machine cascade)
 │   ├── dotfiles.rs      ← copy files, detect conflicts
 │   ├── tools.rs         ← resolve and install tools
 │   └── hooks.rs         ← run hook scripts
@@ -86,13 +86,13 @@ the first build acts on.
 source = "dotfiles/"                    # required, path relative to repo root
 target = "~"                            # required, target directory
 
-# post-MVP: platform-specific overrides (requires platform/machine layering)
-# Keys are repo-relative paths (without leading dot).
-# Values are alternate source paths.
+# Platform-specific overrides.
+# Keys are target-relative paths (without leading dot).
+# Values are repo-relative source paths.
 [dotfiles.platforms.<platform>]         # optional, platform = macos|linux|windows
 "<target-path>" = "<source-path>"
 
-# post-MVP: machine-specific overrides (requires platform/machine layering)
+# Machine-specific overrides.
 # Same key/value format as platform overrides.
 [dotfiles.machines.<machine-id>]        # optional
 "<target-path>" = "<source-path>"
@@ -140,7 +140,7 @@ following sections drive behaviour in the first build:
 
 | Section | MVP behaviour |
 |---------|---------------|
-| `[dotfiles]` (source, target) | Copy-based placement with dot-prepend |
+| `[dotfiles]` (source, target, platforms, machines) | Copy-based placement with dot-prepend, platform/machine override cascade |
 | Everything else | Rejected with a diagnostic ("not yet supported") |
 
 ### Field types
@@ -204,13 +204,15 @@ id = "work-macbook"                    # set at init time
 # order = 1
 
 [applied]
-# Key: target path (with dot), Value: hash + timestamp of last apply
-".bashrc" = { hash = "sha256:...", timestamp = "2026-04-26T20:00:00Z" }
-".config/starship.toml" = { hash = "sha256:...", timestamp = "2026-04-25T10:30:00Z" }
+# Key: target path (with dot)
+# Value: hash, timestamp, and repo-relative source path of last apply
+".bashrc" = { hash = "sha256:...", timestamp = "2026-04-26T20:00:00Z", source = "dotfiles/bashrc" }
+".config/starship.toml" = { hash = "sha256:...", timestamp = "2026-04-25T10:30:00Z", source = "dotfiles/config/starship.toml" }
 
-# Post-MVP: entries gain a `source` field for repo attribution
-# ".bashrc" = { hash = "sha256:...", timestamp = "...", source = "dotfiles" }
-# ".config/starship.toml" = { hash = "sha256:...", timestamp = "...", source = "work-dotfiles" }
+# When multi-repo is enabled (post-MVP), `source` disambiguates which
+# repo a file came from:
+# ".bashrc" = { hash = "sha256:...", timestamp = "...", source = "dotfiles/bashrc" }
+# ".config/starship.toml" = { hash = "sha256:...", timestamp = "...", source = "dotfiles/config/starship.toml" }
 ```
 
 ## Error handling
