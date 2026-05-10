@@ -636,10 +636,12 @@ For now, nostos reports the git conflict and stops. The user resolves it
 manually using standard git tools (`git status`, edit the conflicted
 files, `git add`, `git commit`), then re-runs `nostos apply`.
 
-**Open question:** Should nostos try smarter strategies (auto-merge
-non-overlapping TOML changes, use `git pull --rebase` to linearize
-history)? This can be revisited once real-world conflict frequency is
-known.
+**Open question resolved:** nostos uses `git pull --rebase` to linearize
+history and avoid merge commits in personal dotfile repos. If the rebase
+encounters conflicts, nostos reports the conflict and stops — the user
+resolves manually with standard git tools, then re-runs `nostos sync`.
+See [ADR 0001](adr/0001-git-cli-over-libgit2.md) for the decision to
+use the git CLI for all git operations.
 
 ### Execution model
 
@@ -1028,7 +1030,7 @@ curl -fsSL https://github.com/benferse/nostos/releases/latest/download/nostos-ma
 chmod +x /usr/local/bin/nostos
 
 # Clone your config repo and apply everything
-# (no external git needed — nostos uses embedded libgit2)
+# (requires git on PATH — see ADR 0001)
 nostos init https://github.com/user/dotfiles.git
 
 # nostos detects: macOS, aarch64
@@ -1320,7 +1322,7 @@ ignored by git.
 │    installer preference resolution)         │
 ├─────────────────────────────────────────────┤
 │              Git Backend                    │
-│           (libgit2 via git2 crate)          │
+│           (git CLI; see ADR 0001)           │
 └─────────────────────────────────────────────┘
 ```
 
@@ -1640,18 +1642,20 @@ entries. The single-repo schema is a subset of the multi-repo schema
 ## Resolved decisions
 
 - **Bootstrap** — nostos is a single static binary distributed via GitHub
-  Releases. It embeds git support via libgit2 (`git2` crate), so no
-  external `git` command is needed. Users with Rust installed can also
-  `cargo install nostos`. The full bootstrap flow for a fresh machine is:
+  Releases. It shells out to the `git` CLI for git operations (see
+  [ADR 0001](adr/0001-git-cli-over-libgit2.md)), inheriting the user's
+  existing authentication config transparently. Users with Rust installed
+  can also `cargo install nostos`. The full bootstrap flow for a fresh
+  machine is:
 
   1. Download the nostos binary (`curl` or web browser)
-  2. `nostos init <url>` clones the config repo (via embedded libgit2)
-  3. Pre-apply hooks run (install Homebrew, etc.)
-  4. Dotfiles and tools are applied
+  2. Install `git` if not already present
+  3. `nostos init <url>` clones the config repo (via git CLI)
+  4. Pre-apply hooks run (install Homebrew, etc.)
+  5. Dotfiles and tools are applied
 
-  The only prerequisite on a fresh machine is the ability to download
-  the nostos binary. Everything else — git, package managers, tools —
-  flows from there.
+  The prerequisites on a fresh machine are the nostos binary and `git`.
+  Everything else — package managers, tools — flows from there.
 
 - **Plugin system** — nostos will not support third-party plugins or
   extensions. New package manager support or features are added directly
