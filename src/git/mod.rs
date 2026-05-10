@@ -218,7 +218,7 @@ fn classify_error(operation: &str, path: &str, stderr: &str) -> Error {
     }
 
     if lower.contains("authentication")
-        || lower.contains("permission denied")
+        || lower.contains("permission denied (publickey")
         || lower.contains("could not read from remote")
     {
         return Error::AuthFailed {
