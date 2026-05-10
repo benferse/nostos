@@ -27,6 +27,7 @@ pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
 
     // Print dotfiles results
     if let Some(ref dotfiles_report) = report.dotfiles {
+        println!("Dotfiles:");
         print_actions(&dotfiles_report.actions);
         for err in &dotfiles_report.errors {
             eprintln!("  ✗ {err}");
@@ -35,6 +36,7 @@ pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
 
     // Print files results
     if let Some(ref files_report) = report.files {
+        println!("Files:");
         print_actions(&files_report.actions);
         for err in &files_report.errors {
             eprintln!("  ✗ {err}");

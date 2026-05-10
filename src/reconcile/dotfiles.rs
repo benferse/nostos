@@ -63,11 +63,11 @@ impl Report {
 #[non_exhaustive]
 pub enum Error {
     /// The configured source directory does not exist.
-    #[error("dotfile source directory not found: {0}")]
+    #[error("source directory not found: {0}")]
     SourceNotFound(PathBuf),
 
     /// The source path is a symlink; nostos refuses to follow it.
-    #[error("dotfile source path is a symlink (refusing to follow): {0}")]
+    #[error("source path is a symlink (refusing to follow): {0}")]
     SourceIsSymlink(PathBuf),
 
     /// The home directory could not be determined for tilde expansion.

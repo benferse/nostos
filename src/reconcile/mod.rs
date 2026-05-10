@@ -192,9 +192,9 @@ pub fn apply(
 #[non_exhaustive]
 pub enum PlanError {
     #[error("dotfiles: {0}")]
-    Dotfiles(dotfiles::Error),
+    Dotfiles(#[source] dotfiles::Error),
     #[error("files: {0}")]
-    Files(dotfiles::Error),
+    Files(#[source] dotfiles::Error),
 }
 
 /// Errors from apply operation.
@@ -202,9 +202,9 @@ pub enum PlanError {
 #[non_exhaustive]
 pub enum ApplyError {
     #[error("dotfiles: {0}")]
-    Dotfiles(dotfiles::Error),
+    Dotfiles(#[source] dotfiles::Error),
     #[error("files: {0}")]
-    Files(dotfiles::Error),
+    Files(#[source] dotfiles::Error),
 }
 
 #[cfg(test)]
