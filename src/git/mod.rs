@@ -86,14 +86,33 @@ pub fn is_clean(repo: &Path) -> Result<bool, Error> {
 pub fn commit(repo: &Path, message: &str) -> Result<CommitOutcome, Error> {
     ensure_repo(repo)?;
 
-    if is_clean(repo)? {
+    run_git(repo, &["add", "--all"])?;
+
+    let output = Command::new("git")
+        .args(["commit", "-m", message])
+        .current_dir(repo)
+        .output()
+        .map_err(|_| Error::GitNotFound)?;
+
+    if output.status.success() {
+        return Ok(CommitOutcome::Committed);
+    }
+
+    // git commit exits non-zero when there's nothing to commit — detect that
+    // from stdout/stderr rather than treating it as a hard error.
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let lower = combined.to_lowercase();
+
+    if lower.contains("nothing to commit") || lower.contains("nothing added to commit") {
         return Ok(CommitOutcome::NothingToCommit);
     }
 
-    run_git(repo, &["add", "--all"])?;
-    run_git(repo, &["commit", "-m", message])?;
-
-    Ok(CommitOutcome::Committed)
+    let path = repo.display().to_string();
+    Err(classify_error("commit", &path, combined.trim()))
 }
 
 /// Clone a repository from `url` to `dest`.
