@@ -24,3 +24,6 @@ pub mod reconcile;
 
 /// Persistent state tracking what nostos has applied on this machine.
 pub mod state;
+
+/// Git CLI wrapper for clone, commit, pull, push, and status operations.
+pub mod git;

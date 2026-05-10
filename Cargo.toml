@@ -32,6 +32,10 @@ path = "tests/cli.rs"
 name = "workflows"
 path = "tests/workflows.rs"
 
+[[test]]
+name = "git"
+path = "tests/git.rs"
+
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
