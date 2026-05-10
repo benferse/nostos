@@ -123,10 +123,16 @@ pub fn run(url: String, machine: Option<String>, apply: bool) -> anyhow::Result<
 }
 
 /// Default dotfiles directory: `~/.dotfiles`.
+///
+/// Checks `HOME` first (cross-platform), then falls back to `dirs::home_dir()`.
+/// This ensures tests can override the home directory on all platforms,
+/// including Windows where `dirs::home_dir()` ignores `HOME`.
 fn default_dotfiles_path() -> anyhow::Result<PathBuf> {
-    dirs::home_dir()
-        .map(|h| h.join(".dotfiles"))
-        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    Ok(home.join(".dotfiles"))
 }
 
 /// Count files in the dotfiles source directory that would be applied.
