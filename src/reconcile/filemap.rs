@@ -88,12 +88,14 @@ pub fn build(
 
     let mut file_map: HashMap<String, PathBuf> = HashMap::new();
     for rel_path in &base_files {
+        // Normalise to forward slashes so map keys are platform-independent.
+        let normalised = rel_path.replace('\\', "/");
         // Skip files under platforms/ and machines/ — those are only
         // reachable via explicit override mappings.
-        if rel_path.starts_with("platforms/") || rel_path.starts_with("machines/") {
+        if normalised.starts_with("platforms/") || normalised.starts_with("machines/") {
             continue;
         }
-        file_map.insert(rel_path.clone(), source_dir.join(rel_path));
+        file_map.insert(normalised, source_dir.join(rel_path));
     }
 
     // Warn on unknown platform names
