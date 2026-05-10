@@ -9,7 +9,8 @@
     "vscode": {
       "extensions": [
         "rust-lang.rust-analyzer",
-        "vadimcn.vscode-lldb"
+        "vadimcn.vscode-lldb",
+        "swellaby.vscode-rust-test-adapter"
       ]
     }
   },
