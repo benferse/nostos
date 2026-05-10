@@ -500,7 +500,7 @@ fn dot_prepend(rel_path: &str) -> String {
 }
 
 /// Expand `~` to the user's home directory.
-fn expand_tilde(path: &str) -> Result<PathBuf, Error> {
+pub(crate) fn expand_tilde(path: &str) -> Result<PathBuf, Error> {
     if path == "~" || path.starts_with("~/") {
         let home = dirs::home_dir().ok_or(Error::NoHomeDir)?;
         if path == "~" {
@@ -517,7 +517,7 @@ fn expand_tilde(path: &str) -> Result<PathBuf, Error> {
 ///
 /// Streams the file through the hasher with a fixed-size buffer so that large
 /// files do not cause RSS to grow proportionally to file size.
-fn hash_file(path: &Path) -> Result<String, std::io::Error> {
+pub(crate) fn hash_file(path: &Path) -> Result<String, std::io::Error> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();

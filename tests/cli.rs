@@ -411,3 +411,172 @@ bin = "rg"
         .success()
         .stdout(predicate::str::contains("tool(s) declared"));
 }
+
+// ── Track tests ──────────────────────────────────────────
+
+#[test]
+fn track_managed_file_updates_source_and_state() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# original");
+
+    // Apply first to create state
+    fix.nostos().arg("apply").assert().success();
+    assert_eq!(fix.read_target(".bashrc"), "# original");
+
+    // Edit the target file
+    fix.add_target(".bashrc", "# user edited version");
+
+    // Track it back
+    let target_path = fix.target_dir().join(".bashrc");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Tracked"));
+
+    // Verify the source was updated
+    let source_content =
+        fs::read_to_string(fix.dir.path().join("dotfiles").join("bashrc")).unwrap();
+    assert_eq!(source_content, "# user edited version");
+
+    // Verify a subsequent apply sees no changes
+    fix.nostos()
+        .arg("apply")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("up to date"));
+}
+
+#[test]
+fn track_new_dotfile_copies_without_dot() {
+    let fix = TestFixture::new().with_default_config();
+
+    // Create a dotfile in the target directory (not yet managed)
+    fix.add_target(".newrc", "# brand new dotfile");
+
+    let target_path = fix.target_dir().join(".newrc");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Copied"));
+
+    // Verify file went to dotfiles source dir without the dot prefix
+    let source_path = fix.dir.path().join("dotfiles").join("newrc");
+    assert!(source_path.exists(), "source file should exist without dot");
+    assert_eq!(fs::read_to_string(&source_path).unwrap(), "# brand new dotfile");
+}
+
+#[test]
+fn track_new_plain_file_copies_to_files_dir() {
+    let fix = TestFixture::new();
+    let target = fix.target_dir().to_string_lossy().to_string();
+    let config = format!(
+        "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n\n[files]\nsource = \"files/\"\ntarget = '{target}'\n"
+    );
+    fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
+    fs::create_dir_all(fix.dir.path().join("files")).unwrap();
+
+    // Create a non-dot file in the target directory
+    fix.add_target("myscript", "#!/bin/sh\necho hello");
+
+    let target_path = fix.target_dir().join("myscript");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Copied"));
+
+    // Verify file went to files source dir with the same name
+    let source_path = fix.dir.path().join("files").join("myscript");
+    assert!(source_path.exists(), "source file should exist in files dir");
+    assert_eq!(
+        fs::read_to_string(&source_path).unwrap(),
+        "#!/bin/sh\necho hello"
+    );
+}
+
+#[test]
+fn track_no_dotfiles_section_errors() {
+    let fix = TestFixture::new();
+    // Config with only [files], no [dotfiles]
+    let target = fix.target_dir().to_string_lossy().to_string();
+    let config = format!("[files]\nsource = \"files/\"\ntarget = '{target}'\n");
+    fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
+    fs::create_dir_all(fix.dir.path().join("files")).unwrap();
+
+    // Try to track a dotfile — should fail
+    fix.add_target(".myrc", "# content");
+    let target_path = fix.target_dir().join(".myrc");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("no [dotfiles] section configured"));
+}
+
+#[test]
+fn track_no_files_section_errors() {
+    let fix = TestFixture::new().with_default_config();
+
+    // Try to track a non-dot file with no [files] section — should fail
+    fix.add_target("plainfile", "content");
+    let target_path = fix.target_dir().join("plainfile");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("no [files] section configured"));
+}
+
+#[test]
+fn track_managed_file_with_layered_source() {
+    let fix = TestFixture::new();
+    let target = fix.target_dir().to_string_lossy().to_string();
+    let config = format!(
+        r#"[dotfiles]
+source = "dotfiles/"
+target = '{target}'
+
+[dotfiles.platforms.linux]
+"bashrc" = "dotfiles/platforms/linux/bashrc"
+"#
+    );
+    fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
+
+    // Create both base and platform-override source files
+    fix.add_source("bashrc", "# base bashrc");
+    let platform_dir = fix.dir.path().join("dotfiles/platforms/linux");
+    fs::create_dir_all(&platform_dir).unwrap();
+    fs::write(platform_dir.join("bashrc"), "# linux bashrc").unwrap();
+
+    // Apply — on Linux this should use the platform override
+    fix.nostos().arg("apply").assert().success();
+    assert_eq!(fix.read_target(".bashrc"), "# linux bashrc");
+
+    // Edit target
+    fix.add_target(".bashrc", "# linux edited");
+
+    // Track it back — should go to the platform source, not base
+    let target_path = fix.target_dir().join(".bashrc");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Tracked"));
+
+    // Verify the platform source was updated (not the base)
+    let platform_content = fs::read_to_string(platform_dir.join("bashrc")).unwrap();
+    assert_eq!(platform_content, "# linux edited");
+
+    // Base should be untouched
+    let base_content =
+        fs::read_to_string(fix.dir.path().join("dotfiles").join("bashrc")).unwrap();
+    assert_eq!(base_content, "# base bashrc");
+}
