@@ -67,6 +67,236 @@ impl TestFixture {
     }
 }
 
+/// Helper to create a bare git repo to use as a fake "remote" for init tests.
+fn create_bare_repo(dir: &std::path::Path) -> std::path::PathBuf {
+    let bare = dir.join("remote.git");
+    std::process::Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&bare)
+        .output()
+        .expect("git init --bare");
+
+    // Create a non-bare clone, add a nostos.toml + dotfiles, push
+    let work = dir.join("work");
+    std::process::Command::new("git")
+        .args(["clone"])
+        .arg(&bare)
+        .arg(&work)
+        .output()
+        .expect("git clone");
+
+    fs::create_dir_all(work.join("dotfiles")).unwrap();
+    fs::write(work.join("dotfiles/bashrc"), "# bash config\n").unwrap();
+
+    // nostos.toml — use a placeholder target; init tests that apply will
+    // override HOME so the target resolves under the temp tree.
+    fs::write(
+        work.join("nostos.toml"),
+        "[dotfiles]\nsource = \"dotfiles/\"\ntarget = \"~/\"\n",
+    )
+    .unwrap();
+
+    // git add + commit + push
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&work)
+        .output()
+        .expect("git add");
+    std::process::Command::new("git")
+        .args([
+            "-c", "user.name=test",
+            "-c", "user.email=test@test.com",
+            "commit", "-m", "initial",
+        ])
+        .current_dir(&work)
+        .output()
+        .expect("git commit");
+    std::process::Command::new("git")
+        .args(["push"])
+        .current_dir(&work)
+        .output()
+        .expect("git push");
+
+    bare
+}
+
+// ── Init tests ───────────────────────────────────────────
+
+#[test]
+fn init_clones_repo_and_sets_state() {
+    let dir = TempDir::new().unwrap();
+    let bare = create_bare_repo(dir.path());
+    let fake_home = dir.path().join("fakehome");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Repository:"))
+        .stdout(predicate::str::contains("Platform:"))
+        .stdout(predicate::str::contains("Machine:"));
+
+    // .dotfiles should exist under fake home
+    assert!(fake_home.join(".dotfiles").exists());
+
+    // State file should contain repo path and machine identity
+    let state_path = fake_home.join("xdg-config/nostos/state.toml");
+    let state_content = fs::read_to_string(&state_path).unwrap();
+    assert!(state_content.contains(".dotfiles"));
+    assert!(state_content.contains("[machine]"));
+}
+
+#[test]
+fn init_with_machine_flag() {
+    let dir = TempDir::new().unwrap();
+    let bare = create_bare_repo(dir.path());
+    let fake_home = dir.path().join("fakehome");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .arg("--machine")
+        .arg("work-laptop")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Machine:    work-laptop"));
+
+    let state_path = fake_home.join("xdg-config/nostos/state.toml");
+    let state_content = fs::read_to_string(&state_path).unwrap();
+    assert!(state_content.contains("work-laptop"));
+}
+
+#[test]
+fn init_target_exists_errors() {
+    let dir = TempDir::new().unwrap();
+    let bare = create_bare_repo(dir.path());
+    let fake_home = dir.path().join("fakehome");
+    fs::create_dir_all(fake_home.join(".dotfiles")).unwrap();
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("Target directory already exists"));
+}
+
+#[test]
+fn init_with_apply_copies_files() {
+    let dir = TempDir::new().unwrap();
+    let fake_home = dir.path().join("fakehome");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    // Create a bare repo with a nostos.toml that targets the fake home
+    let bare = dir.path().join("remote.git");
+    std::process::Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&bare)
+        .output()
+        .expect("git init --bare");
+
+    let work = dir.path().join("work");
+    std::process::Command::new("git")
+        .args(["clone"])
+        .arg(&bare)
+        .arg(&work)
+        .output()
+        .expect("git clone");
+
+    fs::create_dir_all(work.join("dotfiles")).unwrap();
+    fs::write(work.join("dotfiles/bashrc"), "# from init --apply\n").unwrap();
+
+    // Use absolute target path so apply works predictably
+    let target = fake_home.to_string_lossy().to_string();
+    fs::write(
+        work.join("nostos.toml"),
+        format!("[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n"),
+    )
+    .unwrap();
+
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&work)
+        .output()
+        .expect("git add");
+    std::process::Command::new("git")
+        .args([
+            "-c", "user.name=test",
+            "-c", "user.email=test@test.com",
+            "commit", "-m", "initial",
+        ])
+        .current_dir(&work)
+        .output()
+        .expect("git commit");
+    std::process::Command::new("git")
+        .args(["push"])
+        .current_dir(&work)
+        .output()
+        .expect("git push");
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .arg("--apply")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Applying"))
+        .stdout(predicate::str::contains("Copied"));
+
+    assert_eq!(
+        fs::read_to_string(fake_home.join(".bashrc")).unwrap(),
+        "# from init --apply\n"
+    );
+}
+
+#[test]
+fn init_suggests_plan_without_apply() {
+    let dir = TempDir::new().unwrap();
+    let bare = create_bare_repo(dir.path());
+    let fake_home = dir.path().join("fakehome");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("nostos plan"));
+}
+
 // ── Status tests ─────────────────────────────────────────
 
 #[test]
