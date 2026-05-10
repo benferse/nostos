@@ -1,7 +1,11 @@
 /// Dotfile reconciliation logic.
 pub mod dotfiles;
 
+/// File map builder: base → platform → machine cascade.
+pub mod filemap;
+
 use crate::config::Config;
+use crate::platform::Platform;
 use crate::state::State;
 use std::path::Path;
 
@@ -42,7 +46,13 @@ impl ApplyReport {
 }
 
 /// Build a plan (dry-run) across all phases.
-pub fn plan(config: &Config, state: &State, repo_root: &Path) -> Result<ApplyReport, PlanError> {
+pub fn plan(
+    config: &Config,
+    state: &State,
+    repo_root: &Path,
+    platform: &Platform,
+    machine_id: Option<&str>,
+) -> Result<ApplyReport, PlanError> {
     let mut report = ApplyReport::default();
 
     // Phase 1: Pre-apply hooks (not yet implemented)
@@ -67,14 +77,16 @@ pub fn plan(config: &Config, state: &State, repo_root: &Path) -> Result<ApplyRep
     // Phase 2: Dotfiles (active)
     if let Some(ref dotfiles_config) = config.dotfiles {
         let dotfiles_report =
-            dotfiles::plan(dotfiles_config, state, repo_root).map_err(PlanError::Dotfiles)?;
+            dotfiles::plan(dotfiles_config, state, repo_root, platform, machine_id)
+                .map_err(PlanError::Dotfiles)?;
         report.dotfiles = Some(dotfiles_report);
     }
 
     // Phase 2b: Files (verbatim copy, no dot-prepend)
     if let Some(ref files_config) = config.files {
         let files_report =
-            dotfiles::plan_files(files_config, state, repo_root).map_err(PlanError::Files)?;
+            dotfiles::plan_files(files_config, state, repo_root, platform, machine_id)
+                .map_err(PlanError::Files)?;
         report.files = Some(files_report);
     }
 
@@ -117,6 +129,8 @@ pub fn apply(
     config: &Config,
     state: &mut State,
     repo_root: &Path,
+    platform: &Platform,
+    machine_id: Option<&str>,
 ) -> Result<ApplyReport, ApplyError> {
     let mut report = ApplyReport::default();
 
@@ -141,14 +155,14 @@ pub fn apply(
 
     // Phase 2: Dotfiles (active)
     if let Some(ref dotfiles_config) = config.dotfiles {
-        let dotfiles_report = dotfiles::apply(dotfiles_config, state, repo_root)
+        let dotfiles_report = dotfiles::apply(dotfiles_config, state, repo_root, platform, machine_id)
             .map_err(ApplyError::Dotfiles)?;
         report.dotfiles = Some(dotfiles_report);
     }
 
     // Phase 2b: Files (verbatim copy, no dot-prepend)
     if let Some(ref files_config) = config.files {
-        let files_report = dotfiles::apply_files(files_config, state, repo_root)
+        let files_report = dotfiles::apply_files(files_config, state, repo_root, platform, machine_id)
             .map_err(ApplyError::Files)?;
         report.files = Some(files_report);
     }
@@ -222,11 +236,21 @@ mod tests {
         path.to_string_lossy().replace('\\', "\\\\")
     }
 
+    fn test_platform() -> crate::platform::Platform {
+        crate::platform::Platform {
+            os: crate::platform::Os::Linux,
+            arch: crate::platform::Arch::X86_64,
+            distro: None,
+            managers: vec![],
+        }
+    }
+
     #[test]
     fn plan_empty_config_succeeds() {
         let config = empty_config();
         let state = State::default();
-        let report = plan(&config, &state, Path::new("/nonexistent")).unwrap();
+        let platform = test_platform();
+        let report = plan(&config, &state, Path::new("/nonexistent"), &platform, None).unwrap();
         assert!(report.dotfiles.is_none());
         assert!(report.pending_phases.is_empty());
     }
@@ -251,7 +275,8 @@ mod tests {
         )
         .unwrap();
         let state = State::default();
-        let report = plan(&config, &state, Path::new("/nonexistent")).unwrap();
+        let platform = test_platform();
+        let report = plan(&config, &state, Path::new("/nonexistent"), &platform, None).unwrap();
         assert!(report.dotfiles.is_none());
         assert!(report.files.is_none());
         // Should have: pre-apply hooks, tools, post-apply hooks = 3 pending phases
@@ -286,7 +311,8 @@ mod tests {
         ))
         .unwrap();
         let state = State::default();
-        let report = plan(&config, &state, &repo_root).unwrap();
+        let platform = test_platform();
+        let report = plan(&config, &state, &repo_root, &platform, None).unwrap();
         assert!(report.dotfiles.is_none());
         let files_report = report.files.expect("files report should be present");
         assert_eq!(files_report.actions.len(), 1);
@@ -319,7 +345,8 @@ mod tests {
         ))
         .unwrap();
         let mut state = State::default();
-        let report = apply(&config, &mut state, &repo_root).unwrap();
+        let platform = test_platform();
+        let report = apply(&config, &mut state, &repo_root, &platform, None).unwrap();
         let files_report = report.files.expect("files report should be present");
         assert_eq!(files_report.actions.len(), 1);
         // File should exist at target WITHOUT dot prepend

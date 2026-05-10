@@ -92,8 +92,11 @@ pub fn plan(
     config: &crate::config::dotfiles::DotfilesConfig,
     state: &State,
     repo_root: &Path,
+    platform: &crate::platform::Platform,
+    machine_id: Option<&str>,
 ) -> Result<Report, Error> {
-    plan_inner(&config.source, &config.target, true, state, repo_root)
+    let input = super::filemap::FileMapInput::from(config);
+    plan_inner(&input, &config.target, true, state, repo_root, platform, machine_id)
 }
 
 /// Execute dotfiles (with dot-prepend convention).
@@ -101,8 +104,11 @@ pub fn apply(
     config: &crate::config::dotfiles::DotfilesConfig,
     state: &mut State,
     repo_root: &Path,
+    platform: &crate::platform::Platform,
+    machine_id: Option<&str>,
 ) -> Result<Report, Error> {
-    apply_inner(&config.source, &config.target, true, state, repo_root)
+    let input = super::filemap::FileMapInput::from(config);
+    apply_inner(&input, &config.target, true, state, repo_root, platform, machine_id)
 }
 
 /// Build a plan for verbatim files (no dot-prepend).
@@ -110,8 +116,11 @@ pub fn plan_files(
     config: &crate::config::files::FilesConfig,
     state: &State,
     repo_root: &Path,
+    platform: &crate::platform::Platform,
+    machine_id: Option<&str>,
 ) -> Result<Report, Error> {
-    plan_inner(&config.source, &config.target, false, state, repo_root)
+    let input = super::filemap::FileMapInput::from(config);
+    plan_inner(&input, &config.target, false, state, repo_root, platform, machine_id)
 }
 
 /// Execute verbatim files (no dot-prepend).
@@ -119,36 +128,72 @@ pub fn apply_files(
     config: &crate::config::files::FilesConfig,
     state: &mut State,
     repo_root: &Path,
+    platform: &crate::platform::Platform,
+    machine_id: Option<&str>,
 ) -> Result<Report, Error> {
-    apply_inner(&config.source, &config.target, false, state, repo_root)
+    let input = super::filemap::FileMapInput::from(config);
+    apply_inner(&input, &config.target, false, state, repo_root, platform, machine_id)
 }
 
-/// Shared plan logic: walk source tree, classify each file.
+/// Shared plan logic: build file map, classify each file.
 fn plan_inner(
-    source: &str,
+    input: &super::filemap::FileMapInput,
     target: &str,
     prepend_dot: bool,
     state: &State,
     repo_root: &Path,
+    platform: &crate::platform::Platform,
+    machine_id: Option<&str>,
 ) -> Result<Report, Error> {
-    let source_dir = repo_root.join(source);
+    let source_dir = repo_root.join(input.source);
     check_source_dir(&source_dir)?;
 
     let target_base = expand_tilde(target)?;
     let mut report = Report::default();
 
-    let (files, skips) = walk_source_dir(&source_dir)?;
-    report.errors.extend(skips);
-    for rel_path in files {
-        let src = source_dir.join(&rel_path);
+    let (file_map, diagnostics) =
+        super::filemap::build(input, repo_root, platform, machine_id)?;
+
+    // Report diagnostics as errors/warnings
+    for diag in &diagnostics {
+        match diag {
+            super::filemap::Diagnostic::MissingSource { layer, target, source } => {
+                report.errors.push(format!(
+                    "override source not found: {} (layer: {layer}, target: {target})",
+                    source.display()
+                ));
+            }
+            super::filemap::Diagnostic::UnknownPlatform { name } => {
+                report.errors.push(format!(
+                    "unknown platform name in config: {name} (known: linux, macos, windows)"
+                ));
+            }
+            super::filemap::Diagnostic::WalkSkip(msg) => {
+                report.errors.push(msg.clone());
+            }
+            super::filemap::Diagnostic::SourceOutsideRepo { layer, target, source } => {
+                report.errors.push(format!(
+                    "override source outside repo: {} (layer: {layer}, target: {target})",
+                    source.display()
+                ));
+            }
+        }
+    }
+
+    // Sort keys for deterministic output
+    let mut targets: Vec<_> = file_map.keys().collect();
+    targets.sort();
+
+    for rel_path in targets {
+        let src = &file_map[rel_path];
         let target_rel = if prepend_dot {
-            dot_prepend(&rel_path)
+            dot_prepend(rel_path)
         } else {
-            rel_path
+            rel_path.clone()
         };
         let tgt = target_base.join(&target_rel);
 
-        match classify(&src, &tgt, &target_rel, state) {
+        match classify(src, &tgt, &target_rel, state) {
             Ok(action) => report.actions.push(action),
             Err(msg) => report.errors.push(msg),
         }
@@ -157,32 +202,68 @@ fn plan_inner(
     Ok(report)
 }
 
-/// Shared apply logic: walk source tree, classify and execute each file.
+/// Shared apply logic: build file map, classify and execute each file.
 fn apply_inner(
-    source: &str,
+    input: &super::filemap::FileMapInput,
     target: &str,
     prepend_dot: bool,
     state: &mut State,
     repo_root: &Path,
+    platform: &crate::platform::Platform,
+    machine_id: Option<&str>,
 ) -> Result<Report, Error> {
-    let source_dir = repo_root.join(source);
+    let source_dir = repo_root.join(input.source);
     check_source_dir(&source_dir)?;
 
     let target_base = expand_tilde(target)?;
     let mut report = Report::default();
 
-    let (files, skips) = walk_source_dir(&source_dir)?;
-    report.errors.extend(skips);
-    for rel_path in files {
-        let src = source_dir.join(&rel_path);
+    let (file_map, diagnostics) =
+        super::filemap::build(input, repo_root, platform, machine_id)?;
+
+    for diag in &diagnostics {
+        match diag {
+            super::filemap::Diagnostic::MissingSource { layer, target, source } => {
+                report.errors.push(format!(
+                    "override source not found: {} (layer: {layer}, target: {target})",
+                    source.display()
+                ));
+            }
+            super::filemap::Diagnostic::UnknownPlatform { name } => {
+                report.errors.push(format!(
+                    "unknown platform name in config: {name} (known: linux, macos, windows)"
+                ));
+            }
+            super::filemap::Diagnostic::WalkSkip(msg) => {
+                report.errors.push(msg.clone());
+            }
+            super::filemap::Diagnostic::SourceOutsideRepo { layer, target, source } => {
+                report.errors.push(format!(
+                    "override source outside repo: {} (layer: {layer}, target: {target})",
+                    source.display()
+                ));
+            }
+        }
+    }
+
+    let mut targets: Vec<_> = file_map.keys().collect();
+    targets.sort();
+
+    for rel_path in targets {
+        let src = &file_map[rel_path];
         let target_rel = if prepend_dot {
-            dot_prepend(&rel_path)
+            dot_prepend(rel_path)
         } else {
-            rel_path
+            rel_path.clone()
         };
         let tgt = target_base.join(&target_rel);
 
-        let action = match classify(&src, &tgt, &target_rel, state) {
+        // Compute repo-relative source path for state tracking
+        let source_rel = src.strip_prefix(repo_root)
+            .map(|p| p.to_string_lossy().to_string())
+            .ok();
+
+        let action = match classify(src, &tgt, &target_rel, state) {
             Ok(action) => action,
             Err(msg) => {
                 report.errors.push(msg);
@@ -204,6 +285,7 @@ fn apply_inner(
                     AppliedEntry {
                         hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
+                        source: source_rel,
                     },
                 );
             }
@@ -213,7 +295,6 @@ fn apply_inner(
                 backup,
                 source_hash,
             } => {
-                // Back up the existing file first
                 if let Err(e) = std::fs::copy(target, backup) {
                     report.errors.push(format!(
                         "failed to back up {}: {e}",
@@ -230,6 +311,7 @@ fn apply_inner(
                     AppliedEntry {
                         hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
+                        source: source_rel,
                     },
                 );
             }
@@ -356,7 +438,7 @@ fn check_source_dir(source_dir: &Path) -> Result<(), Error> {
 /// in the dotfiles tree pointing at, e.g., `/etc/passwd` would otherwise be
 /// dereferenced by `std::fs::copy` and written into the user's home as a
 /// regular file.
-fn walk_source_dir(dir: &Path) -> Result<(Vec<String>, Vec<String>), Error> {
+pub(crate) fn walk_source_dir(dir: &Path) -> Result<(Vec<String>, Vec<String>), Error> {
     let mut files = Vec::new();
     let mut skips = Vec::new();
     walk_recursive(dir, dir, &mut files, &mut skips)?;
@@ -506,6 +588,8 @@ mod tests {
             DotfilesConfig {
                 source: "dotfiles/".to_string(),
                 target: self.target_dir.to_string_lossy().to_string(),
+                platforms: Default::default(),
+                machines: Default::default(),
             }
         }
 
@@ -544,12 +628,22 @@ mod tests {
                 AppliedEntry {
                     hash: format!("sha256:{:x}", digest),
                     timestamp: chrono::Utc::now(),
+                    source: None,
                 },
             )
         }
     }
 
     // ── Plan tests ──────────────────────────────────────────
+
+    fn test_platform() -> crate::platform::Platform {
+        crate::platform::Platform {
+            os: crate::platform::Os::Linux,
+            arch: crate::platform::Arch::X86_64,
+            distro: None,
+            managers: vec![],
+        }
+    }
 
     #[test]
     fn plan_new_file() {
@@ -558,7 +652,7 @@ mod tests {
         let state = repo.load_state();
         let config = repo.config();
 
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         assert!(matches!(&report.actions[0], DotfileAction::NewFile { .. }));
     }
@@ -573,7 +667,7 @@ mod tests {
         state.applied.insert(key, entry);
 
         let config = repo.config();
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         assert!(matches!(
             &report.actions[0],
@@ -591,7 +685,7 @@ mod tests {
         state.applied.insert(key, entry);
 
         let config = repo.config();
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         assert!(matches!(
             &report.actions[0],
@@ -609,7 +703,7 @@ mod tests {
         state.applied.insert(key, entry);
 
         let config = repo.config();
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         assert!(matches!(
             &report.actions[0],
@@ -627,7 +721,7 @@ mod tests {
         state.applied.insert(key, entry);
 
         let config = repo.config();
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         assert!(matches!(
             &report.actions[0],
@@ -643,7 +737,7 @@ mod tests {
         let state = State::default(); // no state entry
 
         let config = repo.config();
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         assert!(matches!(
             &report.actions[0],
@@ -659,7 +753,7 @@ mod tests {
         let state = State::default();
         let config = repo.config();
 
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 2);
         assert!(report
             .actions
@@ -674,7 +768,7 @@ mod tests {
         let state = State::default();
         let config = repo.config();
 
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         match &report.actions[0] {
             DotfileAction::NewFile { target, .. } => {
@@ -690,7 +784,7 @@ mod tests {
         let state = State::default();
         let config = repo.config();
 
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert!(report.actions.is_empty());
     }
 
@@ -700,10 +794,12 @@ mod tests {
         let config = DotfilesConfig {
             source: "nonexistent/".to_string(),
             target: repo.target_dir.to_string_lossy().to_string(),
+            platforms: Default::default(),
+            machines: Default::default(),
         };
         let state = State::default();
         assert!(matches!(
-            plan(&config, &state, &repo.repo_root),
+            plan(&config, &state, &repo.repo_root, &test_platform(), None),
             Err(Error::SourceNotFound(_))
         ));
     }
@@ -718,7 +814,7 @@ mod tests {
         state.applied.insert(key, entry);
 
         let config = repo.config();
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         assert!(matches!(
             &report.actions[0],
@@ -735,7 +831,7 @@ mod tests {
         let state = State::default();
         let config = repo.config();
 
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
         assert!(!report.errors.is_empty());
         assert!(report.actions.is_empty());
     }
@@ -747,7 +843,7 @@ mod tests {
         let state = State::default();
         let config = repo.config();
 
-        plan(&config, &state, &repo.repo_root).unwrap();
+        plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
 
         // Verify target was NOT created
         assert!(!repo.target_exists(".bashrc"));
@@ -762,7 +858,7 @@ mod tests {
         let mut state = State::default();
         let config = repo.config();
 
-        let report = apply(&config, &mut state, &repo.repo_root).unwrap();
+        let report = apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         assert!(matches!(
             &report.actions[0],
@@ -779,7 +875,7 @@ mod tests {
         let mut state = State::default();
         let config = repo.config();
 
-        apply(&config, &mut state, &repo.repo_root).unwrap();
+        apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(
             repo.read_target(".config/alacritty/alacritty.toml"),
             "config content"
@@ -796,7 +892,7 @@ mod tests {
         state.applied.insert(key, entry);
         let config = repo.config();
 
-        let report = apply(&config, &mut state, &repo.repo_root).unwrap();
+        let report = apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
 
         // Target should have repo content
         assert_eq!(repo.read_target(".bashrc"), "# repo version 2");
@@ -819,10 +915,10 @@ mod tests {
         let config = repo.config();
 
         // First apply
-        apply(&config, &mut state, &repo.repo_root).unwrap();
+        apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
 
         // Second apply — should be all up to date
-        let report = apply(&config, &mut state, &repo.repo_root).unwrap();
+        let report = apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
         assert_eq!(report.actions.len(), 1);
         assert!(matches!(
             &report.actions[0],
@@ -840,7 +936,7 @@ mod tests {
         state.applied.insert(key, entry);
         let config = repo.config();
 
-        let report = apply(&config, &mut state, &repo.repo_root).unwrap();
+        let report = apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
 
         // Should skip — user's file preserved
         assert_eq!(repo.read_target(".bashrc"), "# user edited");
@@ -872,7 +968,7 @@ mod tests {
         state.applied.insert(k3, e3);
 
         let config = repo.config();
-        let report = apply(&config, &mut state, &repo.repo_root).unwrap();
+        let report = apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
 
         assert_eq!(report.actions.len(), 3);
         assert!(report.has_warnings()); // local mod
@@ -887,7 +983,7 @@ mod tests {
         let mut state = State::default();
         let config = repo.config(); // uses absolute target_dir path
 
-        apply(&config, &mut state, &repo.repo_root).unwrap();
+        apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
         assert!(repo.target_exists(".testfile"));
     }
 
@@ -904,7 +1000,7 @@ mod tests {
         let mut state = State::default();
         let config = repo.config();
 
-        apply(&config, &mut state, &repo.repo_root).unwrap();
+        apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
 
         // New file was placed correctly
         assert_eq!(repo.read_target(".config/foo/bar.toml"), "new dotfile content");
@@ -959,7 +1055,7 @@ mod tests {
 
         let state = State::default();
         let config = repo.config();
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
 
         assert!(report.actions.is_empty(), "no actions for symlinked source");
         assert!(
@@ -981,7 +1077,7 @@ mod tests {
 
         let mut state = State::default();
         let config = repo.config();
-        let report = apply(&config, &mut state, &repo.repo_root).unwrap();
+        let report = apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
 
         assert!(report.actions.is_empty());
         assert!(report.errors.iter().any(|e| e.contains("symlink")));
@@ -1007,7 +1103,7 @@ mod tests {
 
         let state = State::default();
         let config = repo.config();
-        let report = plan(&config, &state, &repo.repo_root).unwrap();
+        let report = plan(&config, &state, &repo.repo_root, &test_platform(), None).unwrap();
 
         // Only the real file should produce an action.
         assert_eq!(report.actions.len(), 1);
@@ -1038,7 +1134,7 @@ mod tests {
 
         let state = State::default();
         let config = repo.config();
-        let result = plan(&config, &state, &repo.repo_root);
+        let result = plan(&config, &state, &repo.repo_root, &test_platform(), None);
         assert!(
             matches!(result, Err(Error::SourceIsSymlink(_))),
             "expected SourceIsSymlink, got {result:?}"
