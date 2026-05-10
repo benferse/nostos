@@ -212,10 +212,14 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::state::State;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn empty_config() -> Config {
         toml::from_str("").unwrap()
+    }
+
+    fn render_path_for_config(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "\\\\")
     }
 
     #[test]
@@ -278,7 +282,7 @@ mod tests {
             source = "files/"
             target = "{}"
             "#,
-            target_dir.display()
+            render_path_for_config(&target_dir)
         ))
         .unwrap();
         let state = State::default();
@@ -302,7 +306,8 @@ mod tests {
         let target_dir = dir.path().join("home");
         std::fs::create_dir_all(repo_root.join("files")).unwrap();
         std::fs::create_dir_all(&target_dir).unwrap();
-        std::fs::write(repo_root.join("files/myscript"), "echo hello").unwrap();
+        let expected_bytes = b"echo hello\n";
+        std::fs::write(repo_root.join("files/myscript"), expected_bytes).unwrap();
 
         let config: Config = toml::from_str(&format!(
             r#"
@@ -310,7 +315,7 @@ mod tests {
             source = "files/"
             target = "{}"
             "#,
-            target_dir.display()
+            render_path_for_config(&target_dir)
         ))
         .unwrap();
         let mut state = State::default();
@@ -318,12 +323,11 @@ mod tests {
         let files_report = report.files.expect("files report should be present");
         assert_eq!(files_report.actions.len(), 1);
         // File should exist at target WITHOUT dot prepend
-        assert!(target_dir.join("myscript").exists());
+        let copied_path = target_dir.join("myscript");
+        assert!(copied_path.exists());
         assert!(!target_dir.join(".myscript").exists());
-        assert_eq!(
-            std::fs::read_to_string(target_dir.join("myscript")).unwrap(),
-            "echo hello"
-        );
+        assert_eq!(std::fs::read(&copied_path).unwrap(), expected_bytes);
+        assert!(state.applied.contains_key(PathBuf::from("myscript").as_path()));
     }
 
     #[test]
