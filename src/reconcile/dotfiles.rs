@@ -1,9 +1,11 @@
-use crate::config::dotfiles::DotfilesConfig;
 use crate::state::{AppliedEntry, State};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-/// What needs to happen for a single dotfile.
+/// What needs to happen for a single file (dotfile or verbatim).
+///
+/// Despite the name, this enum is used for both `[dotfiles]` (with
+/// dot-prepend) and `[files]` (verbatim copy) reconciliation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DotfileAction {
     /// Source and target match — nothing to do.
@@ -61,11 +63,11 @@ impl Report {
 #[non_exhaustive]
 pub enum Error {
     /// The configured source directory does not exist.
-    #[error("dotfile source directory not found: {0}")]
+    #[error("source directory not found: {0}")]
     SourceNotFound(PathBuf),
 
     /// The source path is a symlink; nostos refuses to follow it.
-    #[error("dotfile source path is a symlink (refusing to follow): {0}")]
+    #[error("source path is a symlink (refusing to follow): {0}")]
     SourceIsSymlink(PathBuf),
 
     /// The home directory could not be determined for tilde expansion.
@@ -85,26 +87,68 @@ pub enum Error {
     CreateDir(PathBuf, #[source] std::io::Error),
 }
 
-/// Build a plan without executing it.
+/// Build a plan for dotfiles (with dot-prepend convention).
 pub fn plan(
-    config: &DotfilesConfig,
+    config: &crate::config::dotfiles::DotfilesConfig,
     state: &State,
     repo_root: &Path,
 ) -> Result<Report, Error> {
-    let source_dir = repo_root.join(&config.source);
+    plan_inner(&config.source, &config.target, true, state, repo_root)
+}
+
+/// Execute dotfiles (with dot-prepend convention).
+pub fn apply(
+    config: &crate::config::dotfiles::DotfilesConfig,
+    state: &mut State,
+    repo_root: &Path,
+) -> Result<Report, Error> {
+    apply_inner(&config.source, &config.target, true, state, repo_root)
+}
+
+/// Build a plan for verbatim files (no dot-prepend).
+pub fn plan_files(
+    config: &crate::config::files::FilesConfig,
+    state: &State,
+    repo_root: &Path,
+) -> Result<Report, Error> {
+    plan_inner(&config.source, &config.target, false, state, repo_root)
+}
+
+/// Execute verbatim files (no dot-prepend).
+pub fn apply_files(
+    config: &crate::config::files::FilesConfig,
+    state: &mut State,
+    repo_root: &Path,
+) -> Result<Report, Error> {
+    apply_inner(&config.source, &config.target, false, state, repo_root)
+}
+
+/// Shared plan logic: walk source tree, classify each file.
+fn plan_inner(
+    source: &str,
+    target: &str,
+    prepend_dot: bool,
+    state: &State,
+    repo_root: &Path,
+) -> Result<Report, Error> {
+    let source_dir = repo_root.join(source);
     check_source_dir(&source_dir)?;
 
-    let target_base = expand_tilde(&config.target)?;
+    let target_base = expand_tilde(target)?;
     let mut report = Report::default();
 
     let (files, skips) = walk_source_dir(&source_dir)?;
     report.errors.extend(skips);
     for rel_path in files {
-        let source = source_dir.join(&rel_path);
-        let dot_path = dot_prepend(&rel_path);
-        let target = target_base.join(&dot_path);
+        let src = source_dir.join(&rel_path);
+        let target_rel = if prepend_dot {
+            dot_prepend(&rel_path)
+        } else {
+            rel_path
+        };
+        let tgt = target_base.join(&target_rel);
 
-        match classify(&source, &target, &dot_path, state) {
+        match classify(&src, &tgt, &target_rel, state) {
             Ok(action) => report.actions.push(action),
             Err(msg) => report.errors.push(msg),
         }
@@ -113,26 +157,32 @@ pub fn plan(
     Ok(report)
 }
 
-/// Execute: build plan, apply it (copy files, create backups), update state.
-pub fn apply(
-    config: &DotfilesConfig,
+/// Shared apply logic: walk source tree, classify and execute each file.
+fn apply_inner(
+    source: &str,
+    target: &str,
+    prepend_dot: bool,
     state: &mut State,
     repo_root: &Path,
 ) -> Result<Report, Error> {
-    let source_dir = repo_root.join(&config.source);
+    let source_dir = repo_root.join(source);
     check_source_dir(&source_dir)?;
 
-    let target_base = expand_tilde(&config.target)?;
+    let target_base = expand_tilde(target)?;
     let mut report = Report::default();
 
     let (files, skips) = walk_source_dir(&source_dir)?;
     report.errors.extend(skips);
     for rel_path in files {
-        let source = source_dir.join(&rel_path);
-        let dot_path = dot_prepend(&rel_path);
-        let target = target_base.join(&dot_path);
+        let src = source_dir.join(&rel_path);
+        let target_rel = if prepend_dot {
+            dot_prepend(&rel_path)
+        } else {
+            rel_path
+        };
+        let tgt = target_base.join(&target_rel);
 
-        let action = match classify(&source, &target, &dot_path, state) {
+        let action = match classify(&src, &tgt, &target_rel, state) {
             Ok(action) => action,
             Err(msg) => {
                 report.errors.push(msg);
@@ -150,7 +200,7 @@ pub fn apply(
                     continue;
                 }
                 state.applied.insert(
-                    dot_path,
+                    target_rel,
                     AppliedEntry {
                         hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
@@ -176,7 +226,7 @@ pub fn apply(
                     continue;
                 }
                 state.applied.insert(
-                    dot_path,
+                    target_rel,
                     AppliedEntry {
                         hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
@@ -424,6 +474,7 @@ fn copy_file(source: &Path, target: &Path) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::dotfiles::DotfilesConfig;
     use std::fs;
     use tempfile::TempDir;
 
