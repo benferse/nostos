@@ -1293,7 +1293,6 @@ ignored by git.
 │         │   Layering / Merge    │           │
 │         │  per-repo: base →     │           │
 │         │    platform → machine │           │
-│         │    (post-MVP)         │           │
 │         │  cross-repo: ordered  │           │
 │         │    merge (post-MVP)   │           │
 │         └───────────────────────┘           │

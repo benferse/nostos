@@ -314,3 +314,125 @@ fn workflow_nested_directory_creation() {
         "[window]\npadding = { x = 5, y = 5 }"
     );
 }
+
+// ── Workflow 7: Platform layering ───────────────────────
+
+/// Returns the platform key that the current OS will match.
+fn current_platform() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        panic!("unsupported OS for this test")
+    }
+}
+
+#[test]
+fn workflow_platform_override_replaces_base_file() {
+    let w = Workflow::new();
+    let plat = current_platform();
+
+    // Write a config with a platform override for the current OS.
+    let target = w.dir.path().join("home").to_string_lossy().to_string();
+    let config = format!(
+        "[dotfiles]\n\
+         source = \"dotfiles/\"\n\
+         target = '{target}'\n\
+         \n\
+         [dotfiles.platforms.{plat}]\n\
+         bashrc = \"dotfiles/platforms/{plat}/bashrc\"\n",
+    );
+    fs::write(w.dir.path().join("nostos.toml"), config).unwrap();
+
+    // Base file
+    w.add_source("bashrc", "# base bash config");
+    // Platform-specific override
+    let platform_dir = format!("platforms/{plat}");
+    w.add_source(&format!("{platform_dir}/bashrc"), "# platform bash config");
+
+    // Plan — should show "new file" for .bashrc
+    w.nostos()
+        .arg("plan")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("new file"));
+
+    // Apply — should use the platform-specific version
+    w.nostos().arg("apply").assert().success();
+    assert_eq!(w.read_target(".bashrc"), "# platform bash config");
+}
+
+#[test]
+fn workflow_platform_override_adds_new_file() {
+    let w = Workflow::new();
+    let plat = current_platform();
+
+    let target = w.dir.path().join("home").to_string_lossy().to_string();
+    let config = format!(
+        "[dotfiles]\n\
+         source = \"dotfiles/\"\n\
+         target = '{target}'\n\
+         \n\
+         [dotfiles.platforms.{plat}]\n\
+         platform_only = \"dotfiles/platforms/{plat}/platform_only\"\n",
+    );
+    fs::write(w.dir.path().join("nostos.toml"), config).unwrap();
+
+    // Only a base file (no platform_only in base)
+    w.add_source("bashrc", "# bash");
+    // Platform-only file
+    let platform_dir = format!("platforms/{plat}");
+    w.add_source(&format!("{platform_dir}/platform_only"), "# platform only file");
+
+    w.nostos().arg("apply").assert().success();
+
+    // Both files should exist
+    assert_eq!(w.read_target(".bashrc"), "# bash");
+    assert_eq!(w.read_target(".platform_only"), "# platform only file");
+}
+
+#[test]
+fn workflow_machine_override_wins_over_platform() {
+    let w = Workflow::new();
+    let plat = current_platform();
+    // nostos auto-detects hostname as machine_id via the `hostname` command.
+    let machine = String::from_utf8(
+        std::process::Command::new("hostname")
+            .output()
+            .expect("hostname command")
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+
+    let target = w.dir.path().join("home").to_string_lossy().to_string();
+    let config = format!(
+        "[dotfiles]\n\
+         source = \"dotfiles/\"\n\
+         target = '{target}'\n\
+         \n\
+         [dotfiles.platforms.{plat}]\n\
+         bashrc = \"dotfiles/platforms/{plat}/bashrc\"\n\
+         \n\
+         [dotfiles.machines.\"{machine}\"]\n\
+         bashrc = \"dotfiles/machines/{machine}/bashrc\"\n",
+    );
+    fs::write(w.dir.path().join("nostos.toml"), config).unwrap();
+
+    w.add_source("bashrc", "# base");
+    w.add_source(&format!("platforms/{plat}/bashrc"), "# platform");
+    w.add_source(&format!("machines/{machine}/bashrc"), "# machine");
+
+    // Apply — machine identity auto-detected from hostname
+    w.nostos()
+        .arg("apply")
+        .assert()
+        .success();
+
+    // Machine override wins
+    assert_eq!(w.read_target(".bashrc"), "# machine");
+}

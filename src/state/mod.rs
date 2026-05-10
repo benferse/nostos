@@ -39,6 +39,10 @@ pub struct AppliedEntry {
     pub hash: String,
     /// Timestamp of last apply.
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Repo-relative source path that produced this target file.
+    /// Used by `track` to reverse-map targets back to their source.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Errors that can occur during state operations.
@@ -229,6 +233,7 @@ mod tests {
             AppliedEntry {
                 hash: "sha256:abc123".to_string(),
                 timestamp: Utc::now(),
+                source: None,
             },
         );
 
@@ -279,6 +284,7 @@ mod tests {
                 timestamp: chrono::DateTime::parse_from_rfc3339("2026-04-26T20:00:00Z")
                     .unwrap()
                     .with_timezone(&Utc),
+                source: None,
             },
         );
 
@@ -318,6 +324,7 @@ mod tests {
             AppliedEntry {
                 hash: "sha256:old".to_string(),
                 timestamp: Utc::now(),
+                source: None,
             },
         );
         state.save_to(&path).expect("save");
@@ -342,6 +349,7 @@ mod tests {
                 AppliedEntry {
                     hash: format!("sha256:hash{i}"),
                     timestamp: Utc::now(),
+                    source: None,
                 },
             );
         }
@@ -390,6 +398,7 @@ mod tests {
                         )
                         .unwrap()
                         .with_timezone(&Utc),
+                        source: None,
                     },
                 );
                 toml::to_string_pretty(&state).unwrap()
@@ -521,5 +530,40 @@ mod tests {
         let state: State = toml::from_str(toml_str).unwrap();
         assert!(state.repo.is_none());
         assert_eq!(state.applied.len(), 1);
+    }
+
+    #[test]
+    fn legacy_state_without_source_field_loads() {
+        let toml_str = r#"
+[applied]
+".bashrc" = { hash = "sha256:abc123", timestamp = "2026-04-26T20:00:00Z" }
+"#;
+        let state: State = toml::from_str(toml_str).unwrap();
+        assert!(state.applied[".bashrc"].source.is_none());
+    }
+
+    #[test]
+    fn state_with_source_field_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.toml");
+
+        let mut state = State::default();
+        state.applied.insert(
+            ".bashrc".to_string(),
+            AppliedEntry {
+                hash: "sha256:abc123".to_string(),
+                timestamp: chrono::DateTime::parse_from_rfc3339("2026-04-26T20:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+                source: Some("dotfiles/platforms/linux/bashrc".to_string()),
+            },
+        );
+
+        state.save_to(&path).expect("save");
+        let loaded = State::load_from(&path).expect("load");
+        assert_eq!(
+            loaded.applied[".bashrc"].source.as_deref(),
+            Some("dotfiles/platforms/linux/bashrc")
+        );
     }
 }

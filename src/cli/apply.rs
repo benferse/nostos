@@ -17,7 +17,10 @@ pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
     state.ensure_machine_identity();
     let repo_root = config::repo_root_from_config(&config_path);
 
-    let report = match reconcile::apply(&cfg, &mut state, &repo_root) {
+    let platform = crate::platform::detect().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let machine_id = state.machine_id().map(|s| s.to_string());
+
+    let report = match reconcile::apply(&cfg, &mut state, &repo_root, &platform, machine_id.as_deref()) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {e}");

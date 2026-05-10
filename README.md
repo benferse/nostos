@@ -87,6 +87,55 @@ Requires Rust 1.95+ (edition 2024).
   (e.g., `~/.bashrc.nostos-backup-20260501-121500`), never silent
   overwrites.
 
+- **Platform/machine layering** — override specific files per OS or per
+  machine. The cascade (base → platform → machine) means machine-specific
+  configs always win.
+
+## Platform and machine overrides
+
+nostos supports platform-specific and machine-specific dotfile overrides.
+Base files come from the source directory walk. Platform and machine
+overrides replace or add files using explicit mappings in `nostos.toml`.
+
+```toml
+[dotfiles]
+source = "dotfiles/"
+target = "~"
+
+# Override gitconfig on Linux (e.g., different credential helper)
+[dotfiles.platforms.linux]
+"gitconfig" = "dotfiles/platforms/linux/gitconfig"
+
+# Machine-specific git identity and SSH config
+[dotfiles.machines.work-macbook]
+"gitconfig" = "dotfiles/machines/work-macbook/gitconfig"
+"ssh/config" = "dotfiles/machines/work-macbook/ssh-config"
+```
+
+Corresponding repo layout:
+
+```
+my-env-repo/
+├── nostos.toml
+└── dotfiles/
+    ├── bashrc
+    ├── gitconfig
+    ├── platforms/
+    │   └── linux/
+    │       └── gitconfig
+    └── machines/
+        └── work-macbook/
+            ├── gitconfig
+            └── ssh-config
+```
+
+**Cascade order:** base → platform → machine. If the same target path
+appears at multiple layers, machine wins over platform wins over base.
+Overrides replace or add entries but never remove base files.
+
+**Machine identity** is auto-detected from hostname and stored in
+`state.toml`.
+
 ## Commands
 
 | Command  | Description                                        | Exit codes           |
@@ -134,6 +183,7 @@ cargo clippy --all-targets
 
 What works today:
 - Dotfile sync with conflict detection and safe backups
+- Platform/machine dotfile layering with cascade overrides
 - Full config schema validation (tools, hooks, files, preferences)
 - Cross-platform (Linux, macOS, Windows)
 - Package manager discovery

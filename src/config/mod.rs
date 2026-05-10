@@ -434,6 +434,97 @@ mod tests {
     }
 
     #[test]
+    fn config_with_dotfiles_platform_overrides() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [dotfiles.platforms.linux]
+            "config/alacritty.toml" = "dotfiles/platforms/linux/alacritty.toml"
+
+            [dotfiles.platforms.macos]
+            "config/alacritty.toml" = "dotfiles/platforms/macos/alacritty.toml"
+            "#,
+        )
+        .expect("should parse");
+        let df = config.dotfiles.expect("dotfiles present");
+        assert_eq!(df.platforms.len(), 2);
+        assert!(df.platforms.contains_key("linux"));
+        assert!(df.platforms.contains_key("macos"));
+        assert_eq!(
+            df.platforms["linux"]["config/alacritty.toml"],
+            "dotfiles/platforms/linux/alacritty.toml"
+        );
+    }
+
+    #[test]
+    fn config_with_dotfiles_machine_overrides() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [dotfiles.machines.work-macbook]
+            "gitconfig" = "dotfiles/machines/work-macbook/gitconfig"
+            "#,
+        )
+        .expect("should parse");
+        let df = config.dotfiles.expect("dotfiles present");
+        assert_eq!(df.machines.len(), 1);
+        assert_eq!(
+            df.machines["work-macbook"]["gitconfig"],
+            "dotfiles/machines/work-macbook/gitconfig"
+        );
+    }
+
+    #[test]
+    fn config_with_files_platform_and_machine_overrides() {
+        let config = parse_str(
+            r#"
+            [files]
+            source = "files/"
+            target = "~"
+
+            [files.platforms.linux]
+            "bin/open" = "files/platforms/linux/open"
+
+            [files.machines.work-macbook]
+            "bin/vpn" = "files/machines/work-macbook/vpn"
+            "#,
+        )
+        .expect("should parse");
+        let files = config.files.expect("files present");
+        assert_eq!(files.platforms.len(), 1);
+        assert_eq!(files.machines.len(), 1);
+    }
+
+    #[test]
+    fn config_without_overrides_still_parses() {
+        // Existing configs with no platforms/machines should still work
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [files]
+            source = "files/"
+            target = "~"
+            "#,
+        )
+        .expect("should parse");
+        let df = config.dotfiles.expect("dotfiles present");
+        assert!(df.platforms.is_empty());
+        assert!(df.machines.is_empty());
+        let files = config.files.expect("files present");
+        assert!(files.platforms.is_empty());
+        assert!(files.machines.is_empty());
+    }
+
+    #[test]
     fn repo_root_from_bare_filename_uses_cwd() {
         let path = Path::new("nostos.toml");
         let root = repo_root_from_config(path);
