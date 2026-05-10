@@ -212,7 +212,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::state::State;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     fn empty_config() -> Config {
         toml::from_str("").unwrap()
@@ -327,7 +327,7 @@ mod tests {
         assert!(copied_path.exists());
         assert!(!target_dir.join(".myscript").exists());
         assert_eq!(std::fs::read(&copied_path).unwrap(), expected_bytes);
-        assert!(state.applied.contains_key(PathBuf::from("myscript").as_path()));
+        assert!(state.applied.contains_key("myscript"));
     }
 
     #[test]
