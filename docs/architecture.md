@@ -10,13 +10,18 @@ The smallest useful first build. Everything else is deferred until this
 works end-to-end.
 
 **In scope for MVP:**
-- Config parser (TOML, single file, no layering yet)
+- Config parser (TOML, single file, platform/machine layering)
 - Platform detection (OS, architecture, distro)
 - Dotfiles module (copy-based placement, dot-prepend convention)
+- Files module (verbatim copy, no path transformation)
 - Conflict detection (hash-based state tracking)
-- `nostos apply` command (apply dotfiles)
+- `nostos apply` command (apply dotfiles and files)
 - `nostos plan` command (dry-run of apply)
-- `nostos status` command (show machine identity and platform info)
+- `nostos status` command (show machine identity, platform, active layers)
+- `nostos init` command (clone repo, set machine identity via git CLI)
+- `nostos sync` command (commit, pull --rebase, push via git CLI)
+- `nostos track` command (reverse-sync target files back into repo)
+- Git CLI wrapper module (see [ADR 0001](adr/0001-git-cli-over-libgit2.md))
 - Structured error handling (`thiserror` + `anyhow` + `miette` for
   config diagnostics) — wired up from the start so typed module errors
   are surfaced with context at command boundaries
@@ -26,10 +31,6 @@ works end-to-end.
   - Per-distro installer preferences
 - Hook executor
 - Platform/machine layering for hooks and tools
-- `nostos init` (git clone via libgit2)
-- `nostos sync` (commit/push/pull)
-- `nostos track` (reverse sync)
-- `[files]` section (verbatim copy)
 - Multi-repo support (`repo add`/`remove`/`list`, unified merge across
   repos, `[[repo]]` state tracking — see concept.md)
 
@@ -42,12 +43,12 @@ src/
 ├── cli/                 ← command-line interface
 │   ├── mod.rs           ← clap app definition
 │   ├── apply.rs         ← nostos apply
-│   ├── init.rs          ← nostos init (post-MVP)
+│   ├── init.rs          ← nostos init (clone repo, set machine identity)
 │   ├── plan.rs          ← nostos plan
 │   ├── repo.rs          ← nostos repo add/remove/list (post-MVP)
-│   ├── status.rs        ← nostos status
-│   ├── sync.rs          ← nostos sync (post-MVP)
-│   └── track.rs         ← nostos track (post-MVP)
+│   ├── status.rs        ← nostos status (platform, layers, managers)
+│   ├── sync.rs          ← nostos sync (commit, pull --rebase, push)
+│   └── track.rs         ← nostos track (reverse-sync target → repo)
 ├── config/              ← configuration parsing and merging
 │   ├── mod.rs           ← top-level Config struct
 │   ├── dotfiles.rs      ← dotfile config types
@@ -67,8 +68,8 @@ src/
 ├── state/               ← local machine state (state.toml)
 │   └── mod.rs           ← read/write applied hashes, machine identity,
 │                           repo registry (post-MVP: [[repo]] array)
-└── git/                 ← git operations
-    └── mod.rs           ← clone, commit, push, pull via libgit2
+└── git/                 ← git operations (CLI wrapper; see ADR 0001)
+    └── mod.rs           ← clone, commit, push, pull via git CLI
 ```
 
 ## Config schema
@@ -97,11 +98,19 @@ target = "~"                            # required, target directory
 [dotfiles.machines.<machine-id>]        # optional
 "<target-path>" = "<source-path>"
 
-# ── Files (verbatim copy, no dot-prepend) ── post-MVP ────
+# ── Files (verbatim copy, no dot-prepend) ────────────────
 
 [files]
 source = "files/"                       # required
 target = "~"                            # required
+
+# Platform-specific overrides (same format as dotfiles).
+[files.platforms.<platform>]
+"<target-path>" = "<source-path>"
+
+# Machine-specific overrides.
+[files.machines.<machine-id>]
+"<target-path>" = "<source-path>"
 
 # ── Hooks ── post-MVP ────────────────────────────────────
 
@@ -141,6 +150,7 @@ following sections drive behaviour in the first build:
 | Section | MVP behaviour |
 |---------|---------------|
 | `[dotfiles]` (source, target, platforms, machines) | Copy-based placement with dot-prepend, platform/machine override cascade |
+| `[files]` (source, target, platforms, machines) | Verbatim copy with platform/machine override cascade |
 | Everything else | Rejected with a diagnostic ("not yet supported") |
 
 ### Field types
@@ -173,9 +183,11 @@ following sections drive behaviour in the first build:
 | `thiserror` | Typed error enums per module | derive API |
 | `anyhow` | Application-level error propagation | CLI layer only — never in public library APIs |
 | `miette` | Rich diagnostics for config parse errors | `fancy` feature in the binary; config module only |
-| `git2` | Git operations via libgit2 | deferred to post-MVP |
 | `sha2` | Content hashing for conflict detection | SHA-256 |
 | `dirs` | Platform-appropriate config/data directories | state.toml location |
+
+Git operations shell out to the `git` CLI instead of using `git2`/libgit2.
+See [ADR 0001](adr/0001-git-cli-over-libgit2.md) for rationale.
 
 ## State file schema
 
@@ -185,6 +197,9 @@ concept.md) and is never synced to git.
 ```toml
 [machine]
 id = "work-macbook"                    # set at init time
+
+[repo]
+path = "/home/user/.config/nostos/dotfiles"  # absolute path to the repo clone
 
 # --- Post-MVP: multi-repo support ---
 # When multi-repo is enabled, the repo registry tracks all configured
@@ -305,3 +320,6 @@ non-zero exits from `plan`.
 - **State file** — unit tests for read/write/update of `state.toml`.
 - **CLI commands** — integration tests that run the binary and assert
   stdout/stderr output and exit codes.
+- **End-to-end workflows** — integration tests that exercise multi-step
+  scenarios (init → apply → track → sync) with temp repos and git
+  operations, covering cross-platform edge cases.
