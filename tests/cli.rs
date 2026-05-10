@@ -621,6 +621,101 @@ fn status_shows_platform_and_managers() {
 }
 
 #[test]
+fn status_shows_machine_not_set() {
+    let fix = TestFixture::new().with_default_config();
+    fix.nostos()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Machine:   (not set)"));
+}
+
+#[test]
+fn status_shows_repo_not_set() {
+    let fix = TestFixture::new().with_default_config();
+    fix.nostos()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Repo:      (not set"));
+}
+
+#[test]
+fn status_shows_base_layer() {
+    let fix = TestFixture::new().with_default_config();
+    fix.nostos()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Layers:    base"));
+}
+
+#[test]
+fn status_shows_active_platform_layer() {
+    let fix = TestFixture::new();
+    let target = fix.target_dir().to_string_lossy().to_string();
+
+    let platform = if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "windows"
+    };
+
+    let config = format!(
+        r#"[dotfiles]
+source = "dotfiles/"
+target = '{target}'
+
+[dotfiles.platforms.{platform}]
+"bashrc" = "dotfiles/platforms/{platform}/bashrc"
+"#
+    );
+    fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
+    fs::create_dir_all(fix.dir.path().join("dotfiles")).unwrap();
+
+    fix.nostos()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("Layers:    base + {platform}")));
+}
+
+#[test]
+fn status_empty_platform_section_not_counted_as_layer() {
+    let fix = TestFixture::new();
+    let target = fix.target_dir().to_string_lossy().to_string();
+
+    let platform = if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "windows"
+    };
+
+    // Platform section exists but has no entries
+    let config = format!(
+        r#"[dotfiles]
+source = "dotfiles/"
+target = '{target}'
+
+[dotfiles.platforms.{platform}]
+"#
+    );
+    fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
+    fs::create_dir_all(fix.dir.path().join("dotfiles")).unwrap();
+
+    fix.nostos()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Layers:    base"))
+        .stdout(predicate::str::contains(format!("base + {platform}")).not());
+}
+
+#[test]
 fn config_only_tools_no_dotfiles_is_valid() {
     let fixture = TestFixture::new();
     let config = r#"
