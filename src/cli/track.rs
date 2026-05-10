@@ -64,6 +64,8 @@ fn try_track_managed(
     if let Some(ref df) = cfg.dotfiles {
         let target_base = expand_tilde(&df.target)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        // Canonicalize to handle symlinks (e.g. /var → /private/var on macOS)
+        let target_base = target_base.canonicalize().unwrap_or(target_base);
         if let Ok(rel) = target_path.strip_prefix(&target_base) {
             let key = rel.to_string_lossy().replace('\\', "/");
             if let Some(entry) = state.applied.get(&key) {
@@ -77,6 +79,7 @@ fn try_track_managed(
     if let Some(ref files) = cfg.files {
         let target_base = expand_tilde(&files.target)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let target_base = target_base.canonicalize().unwrap_or(target_base);
         if let Ok(rel) = target_path.strip_prefix(&target_base) {
             let key = rel.to_string_lossy().replace('\\', "/");
             if let Some(entry) = state.applied.get(&key) {

@@ -538,29 +538,39 @@ fn track_no_files_section_errors() {
 fn track_managed_file_with_layered_source() {
     let fix = TestFixture::new();
     let target = fix.target_dir().to_string_lossy().to_string();
+
+    // Use the current platform so the override applies on any OS
+    let platform = if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "windows"
+    };
+
     let config = format!(
         r#"[dotfiles]
 source = "dotfiles/"
 target = '{target}'
 
-[dotfiles.platforms.linux]
-"bashrc" = "dotfiles/platforms/linux/bashrc"
+[dotfiles.platforms.{platform}]
+"bashrc" = "dotfiles/platforms/{platform}/bashrc"
 "#
     );
     fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
 
     // Create both base and platform-override source files
     fix.add_source("bashrc", "# base bashrc");
-    let platform_dir = fix.dir.path().join("dotfiles/platforms/linux");
+    let platform_dir = fix.dir.path().join(format!("dotfiles/platforms/{platform}"));
     fs::create_dir_all(&platform_dir).unwrap();
-    fs::write(platform_dir.join("bashrc"), "# linux bashrc").unwrap();
+    fs::write(platform_dir.join("bashrc"), "# platform bashrc").unwrap();
 
-    // Apply — on Linux this should use the platform override
+    // Apply — should use the platform override
     fix.nostos().arg("apply").assert().success();
-    assert_eq!(fix.read_target(".bashrc"), "# linux bashrc");
+    assert_eq!(fix.read_target(".bashrc"), "# platform bashrc");
 
     // Edit target
-    fix.add_target(".bashrc", "# linux edited");
+    fix.add_target(".bashrc", "# platform edited");
 
     // Track it back — should go to the platform source, not base
     let target_path = fix.target_dir().join(".bashrc");
@@ -573,7 +583,7 @@ target = '{target}'
 
     // Verify the platform source was updated (not the base)
     let platform_content = fs::read_to_string(platform_dir.join("bashrc")).unwrap();
-    assert_eq!(platform_content, "# linux edited");
+    assert_eq!(platform_content, "# platform edited");
 
     // Base should be untouched
     let base_content =
