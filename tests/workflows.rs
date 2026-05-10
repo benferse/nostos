@@ -418,7 +418,7 @@ fn workflow_machine_override_wins_over_platform() {
          [dotfiles.platforms.{plat}]\n\
          bashrc = \"dotfiles/platforms/{plat}/bashrc\"\n\
          \n\
-         [dotfiles.machines.{machine}]\n\
+         [dotfiles.machines.\"{machine}\"]\n\
          bashrc = \"dotfiles/machines/{machine}/bashrc\"\n",
     );
     fs::write(w.dir.path().join("nostos.toml"), config).unwrap();
