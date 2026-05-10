@@ -729,6 +729,89 @@ fn track_new_plain_file_copies_to_files_dir() {
     );
 }
 
+// ── Sync tests ───────────────────────────────────────────
+
+/// A pair of git repos for testing sync: a bare "remote" and a local clone.
+struct SyncFixture {
+    root: TempDir,
+}
+
+impl SyncFixture {
+    fn new() -> Self {
+        let root = TempDir::new().unwrap();
+        let remote = root.path().join("remote.git");
+        let local = root.path().join("local");
+        let home = root.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+
+        // Initialise a bare remote
+        run_git(root.path(), &["init", "--bare", remote.to_str().unwrap()]);
+
+        // Clone it to "local"
+        run_git(
+            root.path(),
+            &["clone", remote.to_str().unwrap(), local.to_str().unwrap()],
+        );
+
+        // Configure user identity for the local repo
+        run_git(&local, &["config", "user.email", "test@example.com"]);
+        run_git(&local, &["config", "user.name", "Test"]);
+
+        // Seed with nostos.toml and a dotfile
+        let target = home.to_string_lossy().to_string();
+        let config = format!(
+            "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n"
+        );
+        fs::write(local.join("nostos.toml"), config).unwrap();
+        fs::create_dir_all(local.join("dotfiles")).unwrap();
+        fs::write(local.join("dotfiles").join("bashrc"), "# initial").unwrap();
+
+        run_git(&local, &["add", "--all"]);
+        run_git(&local, &["commit", "-m", "initial seed"]);
+        run_git(&local, &["push"]);
+
+        SyncFixture { root }
+    }
+
+    fn local_path(&self) -> std::path::PathBuf {
+        self.root.path().join("local")
+    }
+
+    fn remote_path(&self) -> std::path::PathBuf {
+        self.root.path().join("remote.git")
+    }
+
+    fn home_path(&self) -> std::path::PathBuf {
+        self.root.path().join("home")
+    }
+
+    fn nostos_sync(&self) -> Command {
+        let mut cmd = Command::cargo_bin("nostos").unwrap();
+        cmd.arg("--repo").arg(self.local_path());
+        cmd.arg("sync");
+        cmd.env(
+            "XDG_CONFIG_HOME",
+            self.root.path().join("xdg-config").to_str().unwrap(),
+        );
+        cmd
+    }
+}
+
+fn run_git(cwd: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("git should be available");
+    assert!(
+        out.status.success(),
+        "git {:?} in {} failed: {}",
+        args,
+        cwd.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 #[test]
 fn track_no_dotfiles_section_errors() {
     let fix = TestFixture::new();
@@ -819,4 +902,97 @@ target = '{target}'
     let base_content =
         fs::read_to_string(fix.dir.path().join("dotfiles").join("bashrc")).unwrap();
     assert_eq!(base_content, "# base bashrc");
+}
+
+#[test]
+fn sync_dirty_working_tree_auto_commits() {
+    let fix = SyncFixture::new();
+
+    // Make a local change
+    fs::write(
+        fix.local_path().join("dotfiles").join("vimrc"),
+        "# new file",
+    )
+    .unwrap();
+
+    fix.nostos_sync()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Committed local changes"))
+        .stdout(predicate::str::contains("Pushed to remote"));
+}
+
+#[test]
+fn sync_clean_working_tree_skips_commit() {
+    let fix = SyncFixture::new();
+
+    fix.nostos_sync()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Committed local changes").not())
+        .stdout(predicate::str::contains("Pulled from remote"))
+        .stdout(predicate::str::contains("Pushed to remote"));
+}
+
+#[test]
+fn sync_with_apply_flag() {
+    let fix = SyncFixture::new();
+
+    fix.nostos_sync()
+        .arg("--apply")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Dotfiles:"));
+
+    assert!(fix.home_path().join(".bashrc").exists());
+}
+
+#[test]
+fn sync_no_repo_path_errors() {
+    let dir = TempDir::new().unwrap();
+
+    let mut cmd = Command::cargo_bin("nostos").unwrap();
+    cmd.env(
+        "XDG_CONFIG_HOME",
+        dir.path().join("xdg-config").to_str().unwrap(),
+    );
+    cmd.arg("sync")
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No repo path configured"));
+}
+
+#[test]
+fn sync_pulls_remote_commits() {
+    let fix = SyncFixture::new();
+
+    // Simulate a remote change via a second clone
+    let second = fix.root.path().join("second");
+    run_git(
+        fix.root.path(),
+        &[
+            "clone",
+            fix.remote_path().to_str().unwrap(),
+            second.to_str().unwrap(),
+        ],
+    );
+    run_git(&second, &["config", "user.email", "test@example.com"]);
+    run_git(&second, &["config", "user.name", "Test"]);
+    fs::write(
+        second.join("dotfiles").join("gitconfig"),
+        "# from remote",
+    )
+    .unwrap();
+    run_git(&second, &["add", "--all"]);
+    run_git(&second, &["commit", "-m", "remote commit"]);
+    run_git(&second, &["push"]);
+
+    // Sync from the local clone — should pull the remote commit
+    fix.nostos_sync()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pulled from remote"));
+
+    assert!(fix.local_path().join("dotfiles").join("gitconfig").exists());
 }

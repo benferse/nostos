@@ -2,6 +2,7 @@ mod apply;
 mod init;
 mod plan;
 mod status;
+mod sync;
 mod track;
 
 use clap::{Parser, Subcommand};
@@ -44,6 +45,12 @@ pub enum Command {
         /// Path to the target file to track back into the repo
         path: std::path::PathBuf,
     },
+    /// Sync the local dotfiles repo with the remote
+    Sync {
+        /// Apply dotfiles after pulling
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 /// Run the CLI. Returns an ExitCode.
@@ -55,5 +62,6 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Plan => plan::run(repo),
         Command::Apply => apply::run(repo),
         Command::Track { path } => track::run(repo, path),
+        Command::Sync { apply } => sync::run(repo, apply),
     }
 }
