@@ -86,6 +86,24 @@ per-file hashes, timestamps, and source paths. Never synced to git.
 > should point to the Linux-specific source. If the override source path
 > doesn't exist, `**plan**` will report an error."
 
+## Invariants
+
+**Forward-slash path keys**:
+All logical path keys (file map keys, config override keys, state entry
+keys) use forward slashes regardless of platform. OS-specific path
+separators from `std::fs` and `Path::display()` must be normalised to
+`/` before use as map keys or comparison targets. This applies to any
+code that walks directories, builds file maps, or matches path prefixes.
+Rationale: nostos is cross-platform (Linux, macOS, Windows) and CI runs
+on all three; backslash keys silently break prefix filters and map
+lookups on Windows.
+
+**Quote machine identities in TOML keys**:
+Machine identities (hostnames) may contain dots, which TOML interprets
+as nested table separators. Always quote machine IDs when interpolating
+into TOML table headers: `[dotfiles.machines."my-host.local"]`. This
+applies to both production config generation and test fixtures.
+
 ## Flagged ambiguities
 
 - "overlay" was considered for what we call **override**. Rejected because
