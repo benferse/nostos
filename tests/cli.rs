@@ -270,10 +270,10 @@ fn init_with_apply_copies_files() {
         .stdout(predicate::str::contains("Applying"))
         .stdout(predicate::str::contains("Copied"));
 
-    assert_eq!(
-        fs::read_to_string(fake_home.join(".bashrc")).unwrap(),
-        "# from init --apply\n"
-    );
+    let content = fs::read_to_string(fake_home.join(".bashrc")).unwrap();
+    // Normalise line endings — git on Windows may convert \n → \r\n
+    let content = content.replace("\r\n", "\n");
+    assert_eq!(content, "# from init --apply\n");
 }
 
 #[test]
