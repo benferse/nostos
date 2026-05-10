@@ -49,3 +49,17 @@ mappings). Config format is TOML.
 - **Keep examples consistent.** When a design decision affects multiple
   examples in a document, update all of them in the same commit. Don't
   leave stale examples for a follow-up pass.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues on this repo. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
