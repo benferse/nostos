@@ -55,26 +55,8 @@ pub fn plan(
 ) -> Result<ApplyReport, PlanError> {
     let mut report = ApplyReport::default();
 
-    // Phase 1: Pre-apply hooks (not yet implemented)
-    if !config.hooks.is_empty() {
-        let pre_hooks: Vec<_> = config
-            .hooks
-            .iter()
-            .filter(|h| h.when == crate::config::hooks::HookWhen::PreApply)
-            .collect();
-        if !pre_hooks.is_empty() {
-            report.pending_phases.push(PhaseReport {
-                phase: "pre-apply hooks".to_string(),
-                executed: false,
-                skipped_reason: Some(format!(
-                    "{} pre-apply hook(s) declared but hook execution is not yet implemented",
-                    pre_hooks.len()
-                )),
-            });
-        }
-    }
+    collect_pending_phases(config, &mut report);
 
-    // Phase 2: Dotfiles (active)
     if let Some(ref dotfiles_config) = config.dotfiles {
         let dotfiles_report =
             dotfiles::plan(dotfiles_config, state, repo_root, platform, machine_id)
@@ -82,43 +64,11 @@ pub fn plan(
         report.dotfiles = Some(dotfiles_report);
     }
 
-    // Phase 2b: Files (verbatim copy, no dot-prepend)
     if let Some(ref files_config) = config.files {
         let files_report =
             dotfiles::plan_files(files_config, state, repo_root, platform, machine_id)
                 .map_err(PlanError::Files)?;
         report.files = Some(files_report);
-    }
-
-    // Phase 3: Tools (not yet implemented)
-    if !config.tools.is_empty() {
-        report.pending_phases.push(PhaseReport {
-            phase: "tools".to_string(),
-            executed: false,
-            skipped_reason: Some(format!(
-                "{} tool(s) declared but tool installation is not yet implemented",
-                config.tools.len()
-            )),
-        });
-    }
-
-    // Phase 4: Post-apply hooks (not yet implemented)
-    if !config.hooks.is_empty() {
-        let post_hooks: Vec<_> = config
-            .hooks
-            .iter()
-            .filter(|h| h.when == crate::config::hooks::HookWhen::PostApply)
-            .collect();
-        if !post_hooks.is_empty() {
-            report.pending_phases.push(PhaseReport {
-                phase: "post-apply hooks".to_string(),
-                executed: false,
-                skipped_reason: Some(format!(
-                    "{} post-apply hook(s) declared but hook execution is not yet implemented",
-                    post_hooks.len()
-                )),
-            });
-        }
     }
 
     Ok(report)
@@ -134,40 +84,40 @@ pub fn apply(
 ) -> Result<ApplyReport, ApplyError> {
     let mut report = ApplyReport::default();
 
-    // Phase 1: Pre-apply hooks (not yet implemented)
-    if !config.hooks.is_empty() {
-        let pre_hooks: Vec<_> = config
-            .hooks
-            .iter()
-            .filter(|h| h.when == crate::config::hooks::HookWhen::PreApply)
-            .collect();
-        if !pre_hooks.is_empty() {
-            report.pending_phases.push(PhaseReport {
-                phase: "pre-apply hooks".to_string(),
-                executed: false,
-                skipped_reason: Some(format!(
-                    "{} pre-apply hook(s) declared but hook execution is not yet implemented",
-                    pre_hooks.len()
-                )),
-            });
-        }
-    }
+    collect_pending_phases(config, &mut report);
 
-    // Phase 2: Dotfiles (active)
     if let Some(ref dotfiles_config) = config.dotfiles {
         let dotfiles_report = dotfiles::apply(dotfiles_config, state, repo_root, platform, machine_id)
             .map_err(ApplyError::Dotfiles)?;
         report.dotfiles = Some(dotfiles_report);
     }
 
-    // Phase 2b: Files (verbatim copy, no dot-prepend)
     if let Some(ref files_config) = config.files {
         let files_report = dotfiles::apply_files(files_config, state, repo_root, platform, machine_id)
             .map_err(ApplyError::Files)?;
         report.files = Some(files_report);
     }
 
-    // Phase 3: Tools (not yet implemented)
+    Ok(report)
+}
+
+/// Populate pending-phase warnings for not-yet-implemented features.
+fn collect_pending_phases(config: &Config, report: &mut ApplyReport) {
+    let pre_hook_count = config
+        .hooks
+        .iter()
+        .filter(|h| h.when == crate::config::hooks::HookWhen::PreApply)
+        .count();
+    if pre_hook_count > 0 {
+        report.pending_phases.push(PhaseReport {
+            phase: "pre-apply hooks".to_string(),
+            executed: false,
+            skipped_reason: Some(format!(
+                "{pre_hook_count} pre-apply hook(s) declared but hook execution is not yet implemented"
+            )),
+        });
+    }
+
     if !config.tools.is_empty() {
         report.pending_phases.push(PhaseReport {
             phase: "tools".to_string(),
@@ -179,26 +129,20 @@ pub fn apply(
         });
     }
 
-    // Phase 4: Post-apply hooks (not yet implemented)
-    if !config.hooks.is_empty() {
-        let post_hooks: Vec<_> = config
-            .hooks
-            .iter()
-            .filter(|h| h.when == crate::config::hooks::HookWhen::PostApply)
-            .collect();
-        if !post_hooks.is_empty() {
-            report.pending_phases.push(PhaseReport {
-                phase: "post-apply hooks".to_string(),
-                executed: false,
-                skipped_reason: Some(format!(
-                    "{} post-apply hook(s) declared but hook execution is not yet implemented",
-                    post_hooks.len()
-                )),
-            });
-        }
+    let post_hook_count = config
+        .hooks
+        .iter()
+        .filter(|h| h.when == crate::config::hooks::HookWhen::PostApply)
+        .count();
+    if post_hook_count > 0 {
+        report.pending_phases.push(PhaseReport {
+            phase: "post-apply hooks".to_string(),
+            executed: false,
+            skipped_reason: Some(format!(
+                "{post_hook_count} post-apply hook(s) declared but hook execution is not yet implemented"
+            )),
+        });
     }
-
-    Ok(report)
 }
 
 /// Errors from plan operation.
