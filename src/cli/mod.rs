@@ -1,6 +1,7 @@
 mod apply;
 mod init;
 mod plan;
+mod report;
 mod status;
 mod sync;
 mod track;
