@@ -1,5 +1,5 @@
 use crate::config;
-use crate::reconcile::{self, dotfiles::DotfileAction};
+use crate::reconcile;
 use crate::state::State;
 use std::path::Path;
 use std::process::ExitCode;
@@ -28,30 +28,13 @@ pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
         }
     };
 
-    // Print dotfiles results
     if let Some(ref dotfiles_report) = report.dotfiles {
-        println!("Dotfiles:");
-        print_actions(&dotfiles_report.actions);
-        for err in &dotfiles_report.errors {
-            eprintln!("  ✗ {err}");
-        }
+        super::report::print_apply_section("Dotfiles", dotfiles_report);
     }
-
-    // Print files results
     if let Some(ref files_report) = report.files {
-        println!("Files:");
-        print_actions(&files_report.actions);
-        for err in &files_report.errors {
-            eprintln!("  ✗ {err}");
-        }
+        super::report::print_apply_section("Files", files_report);
     }
-
-    // Print pending phase warnings
-    for phase in &report.pending_phases {
-        if let Some(ref reason) = phase.skipped_reason {
-            println!("⚠ {reason}");
-        }
-    }
+    super::report::print_pending_phases(&report);
 
     // Store repo path in state if not already set
     if state.repo_path().is_none() {
@@ -68,42 +51,6 @@ pub fn run(repo: Option<&Path>) -> anyhow::Result<ExitCode> {
         Ok(ExitCode::from(5))
     } else {
         Ok(ExitCode::SUCCESS)
-    }
-}
-
-fn display_target(path: &std::path::Path) -> String {
-    path.file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.display().to_string())
-}
-
-fn print_actions(actions: &[DotfileAction]) {
-    for action in actions {
-        match action {
-            DotfileAction::NewFile { target, .. } => {
-                println!("  ✓ Copied → {}", target.display());
-            }
-            DotfileAction::UpToDate { target } => {
-                println!("  ✓ {} — up to date", display_target(target));
-            }
-            DotfileAction::CleanUpdate { target, .. } => {
-                println!("  ✓ Updated → {}", target.display());
-            }
-            DotfileAction::LocalModification { target } => {
-                println!(
-                    "  ⚠ {} — local modification, skipped",
-                    display_target(target)
-                );
-            }
-            DotfileAction::Conflict { target, backup, .. } => {
-                println!(
-                    "  ⚠ Backed up {} → {}",
-                    display_target(target),
-                    backup.display()
-                );
-                println!("  ✓ Updated → {}", target.display());
-            }
-        }
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::config;
 use crate::git;
-use crate::reconcile::{self, dotfiles::DotfileAction};
+use crate::reconcile;
 use crate::state::State;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -84,71 +84,10 @@ fn run_apply(repo_path: &Path, state: &mut State) -> anyhow::Result<()> {
     };
 
     if let Some(ref dotfiles_report) = report.dotfiles {
-        println!("Dotfiles:");
-        for action in &dotfiles_report.actions {
-            match action {
-                DotfileAction::NewFile { target, .. } => {
-                    println!("  ✓ Copied → {}", target.display());
-                }
-                DotfileAction::UpToDate { target } => {
-                    println!("  ✓ {} — up to date", display_target(target));
-                }
-                DotfileAction::CleanUpdate { target, .. } => {
-                    println!("  ✓ Updated → {}", target.display());
-                }
-                DotfileAction::LocalModification { target } => {
-                    println!(
-                        "  ⚠ {} — local modification, skipped",
-                        display_target(target)
-                    );
-                }
-                DotfileAction::Conflict { target, backup, .. } => {
-                    println!(
-                        "  ⚠ Backed up {} → {}",
-                        display_target(target),
-                        backup.display()
-                    );
-                    println!("  ✓ Updated → {}", target.display());
-                }
-            }
-        }
-        for err in &dotfiles_report.errors {
-            eprintln!("  ✗ {err}");
-        }
+        super::report::print_apply_section("Dotfiles", dotfiles_report);
     }
-
     if let Some(ref files_report) = report.files {
-        println!("Files:");
-        for action in &files_report.actions {
-            match action {
-                DotfileAction::NewFile { target, .. } => {
-                    println!("  ✓ Copied → {}", target.display());
-                }
-                DotfileAction::UpToDate { target } => {
-                    println!("  ✓ {} — up to date", display_target(target));
-                }
-                DotfileAction::CleanUpdate { target, .. } => {
-                    println!("  ✓ Updated → {}", target.display());
-                }
-                DotfileAction::LocalModification { target } => {
-                    println!(
-                        "  ⚠ {} — local modification, skipped",
-                        display_target(target)
-                    );
-                }
-                DotfileAction::Conflict { target, backup, .. } => {
-                    println!(
-                        "  ⚠ Backed up {} → {}",
-                        display_target(target),
-                        backup.display()
-                    );
-                    println!("  ✓ Updated → {}", target.display());
-                }
-            }
-        }
-        for err in &files_report.errors {
-            eprintln!("  ✗ {err}");
-        }
+        super::report::print_apply_section("Files", files_report);
     }
 
     if state.repo_path().is_none() {
@@ -159,10 +98,4 @@ fn run_apply(repo_path: &Path, state: &mut State) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-fn display_target(path: &Path) -> String {
-    path.file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.display().to_string())
 }

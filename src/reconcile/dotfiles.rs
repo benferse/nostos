@@ -135,6 +135,34 @@ pub fn apply_files(
     apply_inner(&input, &config.target, false, state, repo_root, platform, machine_id)
 }
 
+/// Convert filemap diagnostics into human-readable error strings.
+fn collect_diagnostics(diagnostics: &[super::filemap::Diagnostic], errors: &mut Vec<String>) {
+    for diag in diagnostics {
+        match diag {
+            super::filemap::Diagnostic::MissingSource { layer, target, source } => {
+                errors.push(format!(
+                    "override source not found: {} (layer: {layer}, target: {target})",
+                    source.display()
+                ));
+            }
+            super::filemap::Diagnostic::UnknownPlatform { name } => {
+                errors.push(format!(
+                    "unknown platform name in config: {name} (known: linux, macos, windows)"
+                ));
+            }
+            super::filemap::Diagnostic::WalkSkip(msg) => {
+                errors.push(msg.clone());
+            }
+            super::filemap::Diagnostic::SourceOutsideRepo { layer, target, source } => {
+                errors.push(format!(
+                    "override source outside repo: {} (layer: {layer}, target: {target})",
+                    source.display()
+                ));
+            }
+        }
+    }
+}
+
 /// Shared plan logic: build file map, classify each file.
 fn plan_inner(
     input: &super::filemap::FileMapInput,
@@ -154,31 +182,7 @@ fn plan_inner(
     let (file_map, diagnostics) =
         super::filemap::build(input, repo_root, platform, machine_id)?;
 
-    // Report diagnostics as errors/warnings
-    for diag in &diagnostics {
-        match diag {
-            super::filemap::Diagnostic::MissingSource { layer, target, source } => {
-                report.errors.push(format!(
-                    "override source not found: {} (layer: {layer}, target: {target})",
-                    source.display()
-                ));
-            }
-            super::filemap::Diagnostic::UnknownPlatform { name } => {
-                report.errors.push(format!(
-                    "unknown platform name in config: {name} (known: linux, macos, windows)"
-                ));
-            }
-            super::filemap::Diagnostic::WalkSkip(msg) => {
-                report.errors.push(msg.clone());
-            }
-            super::filemap::Diagnostic::SourceOutsideRepo { layer, target, source } => {
-                report.errors.push(format!(
-                    "override source outside repo: {} (layer: {layer}, target: {target})",
-                    source.display()
-                ));
-            }
-        }
-    }
+    collect_diagnostics(&diagnostics, &mut report.errors);
 
     // Sort keys for deterministic output
     let mut targets: Vec<_> = file_map.keys().collect();
@@ -221,30 +225,7 @@ fn apply_inner(
     let (file_map, diagnostics) =
         super::filemap::build(input, repo_root, platform, machine_id)?;
 
-    for diag in &diagnostics {
-        match diag {
-            super::filemap::Diagnostic::MissingSource { layer, target, source } => {
-                report.errors.push(format!(
-                    "override source not found: {} (layer: {layer}, target: {target})",
-                    source.display()
-                ));
-            }
-            super::filemap::Diagnostic::UnknownPlatform { name } => {
-                report.errors.push(format!(
-                    "unknown platform name in config: {name} (known: linux, macos, windows)"
-                ));
-            }
-            super::filemap::Diagnostic::WalkSkip(msg) => {
-                report.errors.push(msg.clone());
-            }
-            super::filemap::Diagnostic::SourceOutsideRepo { layer, target, source } => {
-                report.errors.push(format!(
-                    "override source outside repo: {} (layer: {layer}, target: {target})",
-                    source.display()
-                ));
-            }
-        }
-    }
+    collect_diagnostics(&diagnostics, &mut report.errors);
 
     let mut targets: Vec<_> = file_map.keys().collect();
     targets.sort();
