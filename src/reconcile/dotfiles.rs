@@ -163,6 +163,56 @@ fn collect_diagnostics(diagnostics: &[super::filemap::Diagnostic], errors: &mut 
     }
 }
 
+/// Result of preparing the file map: validated source dir, resolved target,
+/// sorted file entries, and any diagnostic errors collected so far.
+struct PreparedFileMap {
+    target_base: PathBuf,
+    /// Sorted (target-relative key, absolute source path) pairs.
+    entries: Vec<(String, PathBuf)>,
+    /// Errors from diagnostics (non-fatal warnings).
+    errors: Vec<String>,
+}
+
+/// Shared setup for plan_inner and apply_inner: validate source dir,
+/// expand target, build file map, collect diagnostics, sort entries.
+fn prepare_file_map(
+    input: &super::filemap::FileMapInput,
+    target: &str,
+    prepend_dot: bool,
+    repo_root: &Path,
+    platform: &crate::platform::Platform,
+    machine_id: Option<&str>,
+) -> Result<PreparedFileMap, Error> {
+    let source_dir = repo_root.join(input.source);
+    check_source_dir(&source_dir)?;
+
+    let target_base = expand_tilde(target)?;
+    let mut errors = Vec::new();
+
+    let (file_map, diagnostics) =
+        super::filemap::build(input, repo_root, platform, machine_id)?;
+
+    collect_diagnostics(&diagnostics, &mut errors);
+
+    let mut keys: Vec<_> = file_map.keys().cloned().collect();
+    keys.sort();
+
+    let entries = keys
+        .into_iter()
+        .map(|rel_path| {
+            let src = file_map[&rel_path].clone();
+            let target_rel = if prepend_dot {
+                dot_prepend(&rel_path)
+            } else {
+                rel_path
+            };
+            (target_rel, src)
+        })
+        .collect();
+
+    Ok(PreparedFileMap { target_base, entries, errors })
+}
+
 /// Shared plan logic: build file map, classify each file.
 fn plan_inner(
     input: &super::filemap::FileMapInput,
@@ -173,31 +223,12 @@ fn plan_inner(
     platform: &crate::platform::Platform,
     machine_id: Option<&str>,
 ) -> Result<Report, Error> {
-    let source_dir = repo_root.join(input.source);
-    check_source_dir(&source_dir)?;
+    let prepared = prepare_file_map(input, target, prepend_dot, repo_root, platform, machine_id)?;
+    let mut report = Report { errors: prepared.errors, ..Default::default() };
 
-    let target_base = expand_tilde(target)?;
-    let mut report = Report::default();
-
-    let (file_map, diagnostics) =
-        super::filemap::build(input, repo_root, platform, machine_id)?;
-
-    collect_diagnostics(&diagnostics, &mut report.errors);
-
-    // Sort keys for deterministic output
-    let mut targets: Vec<_> = file_map.keys().collect();
-    targets.sort();
-
-    for rel_path in targets {
-        let src = &file_map[rel_path];
-        let target_rel = if prepend_dot {
-            dot_prepend(rel_path)
-        } else {
-            rel_path.clone()
-        };
-        let tgt = target_base.join(&target_rel);
-
-        match classify(src, &tgt, &target_rel, state) {
+    for (target_rel, src) in &prepared.entries {
+        let tgt = prepared.target_base.join(target_rel);
+        match classify(src, &tgt, target_rel, state) {
             Ok(action) => report.actions.push(action),
             Err(msg) => report.errors.push(msg),
         }
@@ -216,35 +247,18 @@ fn apply_inner(
     platform: &crate::platform::Platform,
     machine_id: Option<&str>,
 ) -> Result<Report, Error> {
-    let source_dir = repo_root.join(input.source);
-    check_source_dir(&source_dir)?;
+    let prepared = prepare_file_map(input, target, prepend_dot, repo_root, platform, machine_id)?;
+    let mut report = Report { errors: prepared.errors, ..Default::default() };
 
-    let target_base = expand_tilde(target)?;
-    let mut report = Report::default();
-
-    let (file_map, diagnostics) =
-        super::filemap::build(input, repo_root, platform, machine_id)?;
-
-    collect_diagnostics(&diagnostics, &mut report.errors);
-
-    let mut targets: Vec<_> = file_map.keys().collect();
-    targets.sort();
-
-    for rel_path in targets {
-        let src = &file_map[rel_path];
-        let target_rel = if prepend_dot {
-            dot_prepend(rel_path)
-        } else {
-            rel_path.clone()
-        };
-        let tgt = target_base.join(&target_rel);
+    for (target_rel, src) in &prepared.entries {
+        let tgt = prepared.target_base.join(target_rel);
 
         // Compute repo-relative source path for state tracking
         let source_rel = src.strip_prefix(repo_root)
             .map(|p| p.to_string_lossy().to_string())
             .ok();
 
-        let action = match classify(src, &tgt, &target_rel, state) {
+        let action = match classify(src, &tgt, target_rel, state) {
             Ok(action) => action,
             Err(msg) => {
                 report.errors.push(msg);
@@ -262,7 +276,7 @@ fn apply_inner(
                     continue;
                 }
                 state.applied.insert(
-                    target_rel,
+                    target_rel.clone(),
                     AppliedEntry {
                         hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
@@ -288,7 +302,7 @@ fn apply_inner(
                     continue;
                 }
                 state.applied.insert(
-                    target_rel,
+                    target_rel.clone(),
                     AppliedEntry {
                         hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
