@@ -52,6 +52,25 @@ pub fn run(repo: Option<&Path>, path: PathBuf) -> anyhow::Result<ExitCode> {
     track_new_file(&target_path, &cfg, &repo_root)
 }
 
+/// Try to resolve a target path against a config section's target directory,
+/// returning the state key and entry if the file is managed.
+fn resolve_managed_key<'a>(
+    target_path: &Path,
+    section_target: &str,
+    state: &'a State,
+) -> anyhow::Result<Option<(String, &'a crate::state::AppliedEntry)>> {
+    let target_base = expand_tilde(section_target)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let target_base = target_base.canonicalize().unwrap_or(target_base);
+    if let Ok(rel) = target_path.strip_prefix(&target_base) {
+        let key = rel.to_string_lossy().replace('\\', "/");
+        if let Some(entry) = state.applied.get(&key) {
+            return Ok(Some((key, entry)));
+        }
+    }
+    Ok(None)
+}
+
 /// Attempt to track a managed file (one that exists in state.applied).
 /// Returns `Some(ExitCode)` if we handled it, `None` if the file is not managed.
 fn try_track_managed(
@@ -60,32 +79,19 @@ fn try_track_managed(
     state: &State,
     repo_root: &Path,
 ) -> anyhow::Result<Option<ExitCode>> {
-    // Try matching against dotfiles target dir
-    if let Some(ref df) = cfg.dotfiles {
-        let target_base = expand_tilde(&df.target)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        // Canonicalize to handle symlinks (e.g. /var → /private/var on macOS)
-        let target_base = target_base.canonicalize().unwrap_or(target_base);
-        if let Ok(rel) = target_path.strip_prefix(&target_base) {
-            let key = rel.to_string_lossy().replace('\\', "/");
-            if let Some(entry) = state.applied.get(&key) {
-                return do_track_managed(target_path, entry, &key, &df.source, repo_root, state)
-                    .map(Some);
-            }
-        }
-    }
+    // Try each config section that has a target directory
+    let sections: Vec<(&str, &str)> = [
+        cfg.dotfiles.as_ref().map(|df| (df.target.as_str(), df.source.as_str())),
+        cfg.files.as_ref().map(|f| (f.target.as_str(), f.source.as_str())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
-    // Try matching against files target dir
-    if let Some(ref files) = cfg.files {
-        let target_base = expand_tilde(&files.target)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let target_base = target_base.canonicalize().unwrap_or(target_base);
-        if let Ok(rel) = target_path.strip_prefix(&target_base) {
-            let key = rel.to_string_lossy().replace('\\', "/");
-            if let Some(entry) = state.applied.get(&key) {
-                return do_track_managed(target_path, entry, &key, &files.source, repo_root, state)
-                    .map(Some);
-            }
+    for (section_target, section_source) in sections {
+        if let Some((key, entry)) = resolve_managed_key(target_path, section_target, state)? {
+            return do_track_managed(target_path, entry, &key, section_source, repo_root, state)
+                .map(Some);
         }
     }
 
@@ -137,6 +143,36 @@ fn do_track_managed(
     Ok(ExitCode::SUCCESS)
 }
 
+/// Copy a file into the repo and print guidance for the user.
+fn copy_and_print_guidance(
+    target_path: &Path,
+    dest: &Path,
+    repo_root: &Path,
+    section_name: &str,
+    repo_filename: &str,
+) -> anyhow::Result<ExitCode> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("cannot create directory {}: {e}", parent.display()))?;
+    }
+    std::fs::copy(target_path, dest)
+        .map_err(|e| anyhow::anyhow!("cannot copy {}: {e}", target_path.display()))?;
+
+    let rel_dest = dest
+        .strip_prefix(repo_root)
+        .unwrap_or(dest)
+        .display();
+    println!("Copied {} → {}", target_path.display(), dest.display());
+    println!();
+    println!("Add to nostos.toml (file is not yet managed until you do):");
+    println!("  # The base source directory already covers this file.");
+    println!("  # If you need a platform/machine override, add:");
+    println!("  # [{section_name}.platforms.<os>]");
+    println!("  # \"{repo_filename}\" = \"{rel_dest}\"");
+
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Track a new (unmanaged) file into the repo.
 fn track_new_file(
     target_path: &Path,
@@ -164,25 +200,7 @@ fn track_new_file(
 
         let stripped = filename.strip_prefix('.').unwrap_or(&filename);
         let dest = repo_root.join(&df.source).join(stripped);
-
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| anyhow::anyhow!("cannot create directory {}: {e}", parent.display()))?;
-        }
-        std::fs::copy(target_path, &dest)
-            .map_err(|e| anyhow::anyhow!("cannot copy {}: {e}", target_path.display()))?;
-
-        let rel_dest = dest
-            .strip_prefix(repo_root)
-            .unwrap_or(&dest)
-            .display();
-        println!("Copied {} → {}", target_path.display(), dest.display());
-        println!();
-        println!("Add to nostos.toml (file is not yet managed until you do):");
-        println!("  # The base source directory already covers this file.");
-        println!("  # If you need a platform/machine override, add:");
-        println!("  # [dotfiles.platforms.<os>]");
-        println!("  # \"{stripped}\" = \"{rel_dest}\"");
+        copy_and_print_guidance(target_path, &dest, repo_root, "dotfiles", stripped)
     } else {
         let files = match cfg.files {
             Some(ref f) => f,
@@ -196,26 +214,6 @@ fn track_new_file(
         };
 
         let dest = repo_root.join(&files.source).join(&filename);
-
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| anyhow::anyhow!("cannot create directory {}: {e}", parent.display()))?;
-        }
-        std::fs::copy(target_path, &dest)
-            .map_err(|e| anyhow::anyhow!("cannot copy {}: {e}", target_path.display()))?;
-
-        let rel_dest = dest
-            .strip_prefix(repo_root)
-            .unwrap_or(&dest)
-            .display();
-        println!("Copied {} → {}", target_path.display(), dest.display());
-        println!();
-        println!("Add to nostos.toml (file is not yet managed until you do):");
-        println!("  # The base source directory already covers this file.");
-        println!("  # If you need a platform/machine override, add:");
-        println!("  # [files.platforms.<os>]");
-        println!("  # \"{filename}\" = \"{rel_dest}\"");
+        copy_and_print_guidance(target_path, &dest, repo_root, "files", &filename)
     }
-
-    Ok(ExitCode::SUCCESS)
 }
