@@ -188,21 +188,15 @@ fn default_state_path() -> Result<PathBuf, Error> {
 
 /// Detect the system hostname.
 fn detect_hostname() -> Option<String> {
-    // Try HOSTNAME env var first (common on Linux)
-    if let Ok(h) = std::env::var("HOSTNAME")
-        && !h.is_empty()
-    {
-        return Some(h);
-    }
+    first_nonempty_env(&["HOSTNAME", "COMPUTERNAME"])
+        .or_else(hostname_from_command)
+}
 
-    // Try COMPUTERNAME on Windows
-    if let Ok(h) = std::env::var("COMPUTERNAME")
-        && !h.is_empty()
-    {
-        return Some(h);
-    }
-
-    hostname_from_command()
+/// Return the value of the first environment variable that is set and non-empty.
+fn first_nonempty_env(vars: &[&str]) -> Option<String> {
+    vars.iter().find_map(|name| {
+        std::env::var(name).ok().filter(|v| !v.is_empty())
+    })
 }
 
 fn hostname_from_command() -> Option<String> {
