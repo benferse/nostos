@@ -1091,3 +1091,55 @@ fn sync_pulls_remote_commits() {
 
     assert!(fix.local_path().join("dotfiles").join("gitconfig").exists());
 }
+
+#[test]
+fn sync_rebase_in_progress_exits_with_error() {
+    let fix = SyncFixture::new();
+
+    // Simulate an interactive rebase in progress
+    fs::create_dir_all(fix.local_path().join(".git/rebase-merge")).unwrap();
+
+    fix.nostos_sync()
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("rebase"));
+}
+
+#[test]
+fn sync_rebase_apply_in_progress_exits_with_error() {
+    let fix = SyncFixture::new();
+
+    // Simulate a rebase-apply (mailbox/am rebase) in progress
+    fs::create_dir_all(fix.local_path().join(".git/rebase-apply")).unwrap();
+
+    fix.nostos_sync()
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("rebase"));
+}
+
+#[test]
+fn sync_merge_in_progress_exits_with_error() {
+    let fix = SyncFixture::new();
+
+    // Simulate a merge in progress
+    fs::write(fix.local_path().join(".git/MERGE_HEAD"), "abc123\n").unwrap();
+
+    fix.nostos_sync()
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("merge"));
+}
+
+#[test]
+fn sync_cherry_pick_in_progress_exits_with_error() {
+    let fix = SyncFixture::new();
+
+    // Simulate a cherry-pick in progress
+    fs::write(fix.local_path().join(".git/CHERRY_PICK_HEAD"), "abc123\n").unwrap();
+
+    fix.nostos_sync()
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cherry-pick"));
+}
