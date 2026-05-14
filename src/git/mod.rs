@@ -26,6 +26,17 @@ pub enum Error {
         path: String,
     },
 
+    /// A git operation (rebase, merge, cherry-pick) is already in progress.
+    #[error("{operation} is in progress in {path} — {guidance}")]
+    OperationInProgress {
+        /// The type of operation detected (e.g. "A rebase", "A merge").
+        operation: String,
+        /// The repository path.
+        path: String,
+        /// Actionable guidance for the user.
+        guidance: String,
+    },
+
     /// A merge or rebase conflict occurred during pull.
     #[error("merge conflict in {path} — resolve conflicts with git tools, then re-run nostos")]
     MergeConflict {
@@ -69,6 +80,56 @@ pub fn is_available() -> bool {
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
+}
+
+/// Check for in-progress git operations (rebase, merge, cherry-pick).
+///
+/// Returns `Ok(())` if no operation is in progress, or an
+/// [`Error::OperationInProgress`] with actionable guidance if one is detected.
+pub fn check_in_progress(repo: &Path) -> Result<(), Error> {
+    let git_dir = resolve_git_dir(repo)?;
+
+    if git_dir.join("rebase-merge").is_dir() {
+        return Err(Error::OperationInProgress {
+            operation: "A rebase".to_string(),
+            path: repo.display().to_string(),
+            guidance: "resolve conflicts, then run `git rebase --continue` \
+                       (or `git rebase --abort`)"
+                .to_string(),
+        });
+    }
+
+    if git_dir.join("rebase-apply").is_dir() {
+        return Err(Error::OperationInProgress {
+            operation: "A rebase".to_string(),
+            path: repo.display().to_string(),
+            guidance: "resolve conflicts, then run `git rebase --continue` \
+                       (or `git rebase --abort`)"
+                .to_string(),
+        });
+    }
+
+    if git_dir.join("MERGE_HEAD").exists() {
+        return Err(Error::OperationInProgress {
+            operation: "A merge".to_string(),
+            path: repo.display().to_string(),
+            guidance: "resolve conflicts, then run `git merge --continue` \
+                       (or `git merge --abort`)"
+                .to_string(),
+        });
+    }
+
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        return Err(Error::OperationInProgress {
+            operation: "A cherry-pick".to_string(),
+            path: repo.display().to_string(),
+            guidance: "resolve conflicts, then run `git cherry-pick --continue` \
+                       (or `git cherry-pick --abort`)"
+                .to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 /// Returns `true` if the working tree at `repo` has no uncommitted changes.
@@ -171,6 +232,31 @@ pub fn push(repo: &Path) -> Result<(), Error> {
 }
 
 // --- internal helpers ---
+
+/// Resolve the `.git` directory for `path`, respecting worktrees.
+fn resolve_git_dir(path: &Path) -> Result<std::path::PathBuf, Error> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(path)
+        .output()
+        .map_err(|_| Error::GitNotFound)?;
+
+    if !output.status.success() {
+        return Err(Error::NotARepo {
+            path: path.display().to_string(),
+        });
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let git_dir = std::path::Path::new(&raw);
+
+    // git rev-parse --git-dir may return a relative path
+    if git_dir.is_absolute() {
+        Ok(git_dir.to_path_buf())
+    } else {
+        Ok(path.join(git_dir))
+    }
+}
 
 /// Verify that `path` is inside a git repository.
 fn ensure_repo(path: &Path) -> Result<(), Error> {

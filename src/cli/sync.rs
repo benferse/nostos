@@ -8,6 +8,13 @@ use std::process::ExitCode;
 pub fn run(repo: Option<&Path>, apply: bool) -> anyhow::Result<ExitCode> {
     let repo_path = resolve_repo_path(repo)?;
 
+    // Bail early if a rebase/merge/cherry-pick is in progress
+    if let Err(e) = git::check_in_progress(&repo_path) {
+        eprintln!("Error: {e}");
+        eprintln!("Re-run `nostos sync` once the operation is complete.");
+        return Ok(ExitCode::FAILURE);
+    }
+
     // Step 1 — Auto-commit local changes
     let mut state = State::load().unwrap_or_default();
     state.ensure_machine_identity();
