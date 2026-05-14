@@ -173,20 +173,59 @@ fn copy_and_print_guidance(
     Ok(ExitCode::SUCCESS)
 }
 
-/// Track a new (unmanaged) file into the repo.
+/// Track a new (unmanaged) file into the repo using the first-segment dot heuristic.
+///
+/// Routing logic:
+/// 1. Compute the path relative to each section's target directory.
+/// 2. If the first segment of the relative path starts with `.`, route to `[dotfiles]`
+///    and strip the leading dot from that first segment only, preserving nested dirs.
+/// 3. Otherwise route to `[files]` verbatim.
 fn track_new_file(
     target_path: &Path,
     cfg: &config::Config,
     repo_root: &Path,
 ) -> anyhow::Result<ExitCode> {
-    let filename = target_path
-        .file_name()
-        .map(|f| f.to_string_lossy().to_string())
+    // Collect configured targets and try to compute a relative path
+    let targets: Vec<&str> = [
+        cfg.dotfiles.as_ref().map(|df| df.target.as_str()),
+        cfg.files.as_ref().map(|f| f.target.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    // Find the relative path from any configured target
+    let mut relative: Option<PathBuf> = None;
+    for &section_target in &targets {
+        let expanded = expand_tilde(section_target).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let expanded = expanded.canonicalize().unwrap_or(expanded);
+        if let Ok(rel) = target_path.strip_prefix(&expanded) {
+            relative = Some(rel.to_path_buf());
+            break;
+        }
+    }
+
+    let rel = match relative {
+        Some(r) => r,
+        None => {
+            eprintln!(
+                "Cannot track {}: not under any configured target directory",
+                target_path.display()
+            );
+            return Ok(ExitCode::from(3));
+        }
+    };
+
+    // Determine routing by checking first segment for leading dot
+    let first_segment = rel
+        .components()
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let is_dotfile = filename.starts_with('.');
+    let needs_dotfiles = first_segment.starts_with('.');
 
-    if is_dotfile {
+    if needs_dotfiles {
         let df = match cfg.dotfiles {
             Some(ref df) => df,
             None => {
@@ -198,9 +237,15 @@ fn track_new_file(
             }
         };
 
-        let stripped = filename.strip_prefix('.').unwrap_or(&filename);
-        let dest = repo_root.join(&df.source).join(stripped);
-        copy_and_print_guidance(target_path, &dest, repo_root, "dotfiles", stripped)
+        // Strip leading dot from first segment, preserve rest of path
+        let stripped_first = first_segment.strip_prefix('.').unwrap_or(&first_segment);
+        let source_rel: PathBuf = std::iter::once(stripped_first)
+            .map(|s| Path::new(s).to_path_buf())
+            .chain(rel.components().skip(1).map(|c| PathBuf::from(c.as_os_str())))
+            .fold(PathBuf::new(), |acc, p| acc.join(p));
+        let source_rel_str = source_rel.to_string_lossy().replace('\\', "/");
+        let dest = repo_root.join(&df.source).join(&source_rel);
+        copy_and_print_guidance(target_path, &dest, repo_root, "dotfiles", &source_rel_str)
     } else {
         let files = match cfg.files {
             Some(ref f) => f,
@@ -213,7 +258,8 @@ fn track_new_file(
             }
         };
 
-        let dest = repo_root.join(&files.source).join(&filename);
-        copy_and_print_guidance(target_path, &dest, repo_root, "files", &filename)
+        let source_rel_str = rel.to_string_lossy().replace('\\', "/");
+        let dest = repo_root.join(&files.source).join(&rel);
+        copy_and_print_guidance(target_path, &dest, repo_root, "files", &source_rel_str)
     }
 }

@@ -824,6 +824,211 @@ fn track_new_plain_file_copies_to_files_dir() {
     );
 }
 
+#[test]
+fn track_new_nested_dotfile_preserves_directory_structure() {
+    let fix = TestFixture::new().with_default_config();
+
+    // Create ~/.config/nvim/init.vim in target (first segment .config starts with dot)
+    fix.add_target(".config/nvim/init.vim", "\" nvim config");
+
+    let target_path = fix.target_dir().join(".config/nvim/init.vim");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Copied"));
+
+    // Should land at dotfiles/config/nvim/init.vim (dot stripped from first segment only)
+    let source_path = fix.dir.path().join("dotfiles/config/nvim/init.vim");
+    assert!(
+        source_path.exists(),
+        "nested dotfile should preserve directory structure"
+    );
+    assert_eq!(fs::read_to_string(&source_path).unwrap(), "\" nvim config");
+}
+
+#[test]
+fn track_new_nested_dotfile_local_bin() {
+    let fix = TestFixture::new().with_default_config();
+
+    // Create ~/.local/bin/foo in target
+    fix.add_target(".local/bin/foo", "#!/bin/sh\necho foo");
+
+    let target_path = fix.target_dir().join(".local/bin/foo");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Copied"));
+
+    // Should land at dotfiles/local/bin/foo
+    let source_path = fix.dir.path().join("dotfiles/local/bin/foo");
+    assert!(
+        source_path.exists(),
+        "nested dotfile should preserve full directory nesting"
+    );
+    assert_eq!(
+        fs::read_to_string(&source_path).unwrap(),
+        "#!/bin/sh\necho foo"
+    );
+}
+
+#[test]
+fn track_new_mid_path_dot_routes_to_files() {
+    let fix = TestFixture::new();
+    let target = fix.target_dir().to_string_lossy().to_string();
+    let config = format!(
+        "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n\n[files]\nsource = \"files/\"\ntarget = '{target}'\n"
+    );
+    fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
+    fs::create_dir_all(fix.dir.path().join("files")).unwrap();
+
+    // Create ~/projects/.envrc — first segment "projects" has no dot
+    fix.add_target("projects/.envrc", "# direnv");
+
+    let target_path = fix.target_dir().join("projects/.envrc");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Copied"));
+
+    // Should go to files/projects/.envrc (mid-path dot is NOT first-segment routing)
+    let source_path = fix.dir.path().join("files/projects/.envrc");
+    assert!(
+        source_path.exists(),
+        "mid-path dotfile should route to files section"
+    );
+    assert_eq!(fs::read_to_string(&source_path).unwrap(), "# direnv");
+}
+
+#[test]
+fn track_new_nested_plain_file_preserves_directory_structure() {
+    let fix = TestFixture::new();
+    let target = fix.target_dir().to_string_lossy().to_string();
+    let config = format!(
+        "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n\n[files]\nsource = \"files/\"\ntarget = '{target}'\n"
+    );
+    fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
+    fs::create_dir_all(fix.dir.path().join("files")).unwrap();
+
+    // Create ~/projects/scripts/deploy.sh — no dot anywhere in the path
+    fix.add_target("projects/scripts/deploy.sh", "#!/bin/sh\ndeploy");
+
+    let target_path = fix.target_dir().join("projects/scripts/deploy.sh");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Copied"));
+
+    // Should go to files/projects/scripts/deploy.sh with full nesting preserved
+    let source_path = fix.dir.path().join("files/projects/scripts/deploy.sh");
+    assert!(
+        source_path.exists(),
+        "nested plain file should preserve directory structure in files section"
+    );
+    assert_eq!(
+        fs::read_to_string(&source_path).unwrap(),
+        "#!/bin/sh\ndeploy"
+    );
+}
+
+// ── Shared-target collision tests ────────────────────────
+
+#[test]
+fn apply_shared_target_no_collision_between_dotfiles_and_files() {
+    let fix = TestFixture::new();
+    let target = fix.target_dir().to_string_lossy().to_string();
+    let config = format!(
+        "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n\n\
+         [files]\nsource = \"files/\"\ntarget = '{target}'\n"
+    );
+    fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
+    fs::create_dir_all(fix.dir.path().join("files/config")).unwrap();
+
+    // Both sections have "config/starship.toml" in their source dirs
+    fix.add_source("config/starship.toml", "# dotfiles version");
+    let files_path = fix.dir.path().join("files/config/starship.toml");
+    fs::write(&files_path, "# files version").unwrap();
+
+    fix.nostos().arg("apply").assert().success();
+
+    // Dotfiles source "config/starship.toml" → target ".config/starship.toml" (dot-prepend)
+    assert_eq!(fix.read_target(".config/starship.toml"), "# dotfiles version");
+    // Files source "config/starship.toml" → target "config/starship.toml" (verbatim)
+    assert_eq!(fix.read_target("config/starship.toml"), "# files version");
+}
+
+#[test]
+fn track_shared_target_routes_dotfile_and_plain_to_correct_sections() {
+    let fix = TestFixture::new();
+    let target = fix.target_dir().to_string_lossy().to_string();
+    let config = format!(
+        "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n\n\
+         [files]\nsource = \"files/\"\ntarget = '{target}'\n"
+    );
+    fs::write(fix.dir.path().join("nostos.toml"), &config).unwrap();
+    fs::create_dir_all(fix.dir.path().join("dotfiles")).unwrap();
+    fs::create_dir_all(fix.dir.path().join("files")).unwrap();
+
+    // Place both files in target: .config/starship.toml and config/starship.toml
+    fix.add_target(".config/starship.toml", "# from dotfiles");
+    fix.add_target("config/starship.toml", "# from files");
+
+    // Track the dotfile version — first segment ".config" has dot → dotfiles section
+    let dotfile_target = fix.target_dir().join(".config/starship.toml");
+    fix.nostos()
+        .arg("track")
+        .arg(&dotfile_target)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Copied"));
+
+    let dotfile_source = fix.dir.path().join("dotfiles/config/starship.toml");
+    assert!(
+        dotfile_source.exists(),
+        "dotfile should route to dotfiles/config/starship.toml"
+    );
+    assert_eq!(
+        fs::read_to_string(&dotfile_source).unwrap(),
+        "# from dotfiles"
+    );
+
+    // Track the plain version — first segment "config" has no dot → files section
+    let plain_target = fix.target_dir().join("config/starship.toml");
+    fix.nostos()
+        .arg("track")
+        .arg(&plain_target)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Copied"));
+
+    let plain_source = fix.dir.path().join("files/config/starship.toml");
+    assert!(
+        plain_source.exists(),
+        "plain file should route to files/config/starship.toml"
+    );
+    assert_eq!(
+        fs::read_to_string(&plain_source).unwrap(),
+        "# from files"
+    );
+
+    // Cross-contamination check: dotfiles didn't get the plain file, files didn't get the dotfile
+    assert!(
+        !fix.dir.path().join("files/.config/starship.toml").exists(),
+        "files section should NOT contain .config/starship.toml"
+    );
+    assert!(
+        !fix.dir.path().join("dotfiles/.config/starship.toml").exists(),
+        "dotfiles section should NOT contain .config/starship.toml with leading dot"
+    );
+}
+
 // ── Sync tests ───────────────────────────────────────────
 
 /// A pair of git repos for testing sync: a bare "remote" and a local clone.
