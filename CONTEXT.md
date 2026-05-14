@@ -45,7 +45,14 @@ changes.
 
 **Track**:
 Reverse-sync a target file back into the repo source, updating the state
-hash. Does not commit.
+hash. Does not commit. For files already managed (present in state), the
+recorded `source` field determines the destination path. For new
+(unmanaged) files, the **first-segment dot heuristic** decides the
+section: if the first segment of the file's path relative to the section
+target starts with `.`, route to `[dotfiles]` and strip the leading dot
+from that first segment only (preserving any nested directories);
+otherwise route to `[files]` verbatim. New files always land in the base
+source directory, never in a platform/machine layer. See ADR 0003.
 
 **Sync**:
 The git workflow: auto-commit local changes, pull --rebase from remote,
@@ -57,8 +64,10 @@ Clone a config repo and set machine identity. Does not auto-apply unless
 
 **Machine identity**:
 A string identifying the current machine (e.g., `work-macbook`), used to
-match `[*.machines.<id>]` overrides. Auto-detected from hostname if not
-explicitly set.
+match `[*.machines.<id>]` overrides. Auto-detected from the OS hostname
+verbatim (e.g., `ben-mbp.local`) when `--machine` is omitted; dots are
+preserved and the "Quote machine identities in TOML keys" invariant
+applies.
 
 **State**:
 The local record of what nostos has applied (`state.toml`). Tracks
