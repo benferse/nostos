@@ -253,10 +253,13 @@ fn apply_inner(
     for (target_rel, src) in &prepared.entries {
         let tgt = prepared.target_base.join(target_rel);
 
-        // Compute repo-relative source path for state tracking
-        let source_rel = src.strip_prefix(repo_root)
-            .map(|p| p.to_string_lossy().to_string())
-            .ok();
+        let source_rel = match compute_repo_relative_source(src, repo_root, target_rel) {
+            Ok(source_rel) => source_rel,
+            Err(msg) => {
+                report.errors.push(msg);
+                continue;
+            }
+        };
 
         let action = match classify(src, &tgt, target_rel, state) {
             Ok(action) => action,
@@ -280,7 +283,7 @@ fn apply_inner(
                     AppliedEntry {
                         hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
-                        source: source_rel,
+                        source: Some(source_rel.clone()),
                     },
                 );
             }
@@ -306,7 +309,7 @@ fn apply_inner(
                     AppliedEntry {
                         hash: source_hash.clone(),
                         timestamp: chrono::Utc::now(),
-                        source: source_rel,
+                        source: Some(source_rel.clone()),
                     },
                 );
             }
@@ -316,6 +319,44 @@ fn apply_inner(
     }
 
     Ok(report)
+}
+
+fn compute_repo_relative_source(
+    source: &Path,
+    repo_root: &Path,
+    target_rel: &str,
+) -> Result<String, String> {
+    let canonical_source = source.canonicalize().map_err(|e| {
+        format!(
+            "cannot canonicalize source {} for target {}: {e}",
+            source.display(),
+            target_rel
+        )
+    })?;
+    let canonical_repo_root = repo_root.canonicalize().map_err(|e| {
+        format!("cannot canonicalize repo root {}: {e}", repo_root.display())
+    })?;
+
+    let relative = canonical_source
+        .strip_prefix(&canonical_repo_root)
+        .map_err(|_| {
+            format!(
+                "source {} for target {} is outside repo root {}",
+                canonical_source.display(),
+                target_rel,
+                canonical_repo_root.display()
+            )
+        })?;
+
+    let relative = relative.to_str().ok_or_else(|| {
+        format!(
+            "source {} for target {} has non-UTF-8 path components",
+            canonical_source.display(),
+            target_rel
+        )
+    })?;
+    // State map keys are normalized to forward slashes across platforms.
+    Ok(relative.replace('\\', "/"))
 }
 
 /// Classify a single dotfile into one of the five action states.
@@ -861,6 +902,10 @@ mod tests {
         ));
         assert_eq!(repo.read_target(".bashrc"), "# bash config");
         assert!(state.applied.contains_key(".bashrc"));
+        assert_eq!(
+            state.applied[".bashrc"].source.as_deref(),
+            Some("dotfiles/bashrc")
+        );
     }
 
     #[test]
@@ -967,6 +1012,50 @@ mod tests {
 
         assert_eq!(report.actions.len(), 3);
         assert!(report.has_warnings()); // local mod
+    }
+
+    #[test]
+    fn apply_skips_outside_repo_source_and_continues_with_valid_entries() {
+        let repo = TestRepo::new();
+        let outside_source_dir = repo._dir.path().join("outside-source");
+        fs::create_dir_all(&outside_source_dir).unwrap();
+        fs::write(outside_source_dir.join("outsidefile"), "outside content").unwrap();
+
+        repo.add_source("inside", "inside content");
+
+        let mut platforms = std::collections::HashMap::new();
+        platforms.insert(
+            "linux".to_string(),
+            std::collections::HashMap::from([(
+                "inside".to_string(),
+                "dotfiles/inside".to_string(),
+            )]),
+        );
+
+        let config = DotfilesConfig {
+            source: outside_source_dir.to_string_lossy().to_string(),
+            target: repo.target_dir.to_string_lossy().to_string(),
+            platforms,
+            machines: Default::default(),
+        };
+        let mut state = State::default();
+
+        let report = apply(&config, &mut state, &repo.repo_root, &test_platform(), None).unwrap();
+
+        assert!(
+            report.errors.iter().any(
+                |e| e.contains("outsidefile") && e.contains("outside repo root")
+            ),
+            "expected outside-repo source error, got {:?}",
+            report.errors
+        );
+        assert!(!repo.target_exists(".outsidefile"));
+        assert_eq!(repo.read_target(".inside"), "inside content");
+        assert_eq!(
+            state.applied[".inside"].source.as_deref(),
+            Some("dotfiles/inside")
+        );
+        assert!(!state.applied.contains_key(".outsidefile"));
     }
 
     #[test]
