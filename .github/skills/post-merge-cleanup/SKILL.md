@@ -1,3 +1,8 @@
+---
+name: post-merge-cleanup
+description: 'Update the local main branch and delete feature branches that have been merged (or squash-merged) via pull request. Use after a PR is merged, when the user says "cleanup branches", "update main", or "post-merge cleanup".'
+---
+
 # Post-Merge Cleanup Skill
 
 Update the local main branch and delete feature branches that have been
