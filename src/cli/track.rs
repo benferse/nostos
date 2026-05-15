@@ -80,17 +80,17 @@ fn try_track_managed(
     repo_root: &Path,
 ) -> anyhow::Result<Option<ExitCode>> {
     // Try each config section that has a target directory
-    let sections: Vec<(&str, &str)> = [
-        cfg.dotfiles.as_ref().map(|df| (df.target.as_str(), df.source.as_str())),
-        cfg.files.as_ref().map(|f| (f.target.as_str(), f.source.as_str())),
+    let sections: Vec<&str> = [
+        cfg.dotfiles.as_ref().map(|df| df.target.as_str()),
+        cfg.files.as_ref().map(|f| f.target.as_str()),
     ]
     .into_iter()
     .flatten()
     .collect();
 
-    for (section_target, section_source) in sections {
+    for section_target in sections {
         if let Some((key, entry)) = resolve_managed_key(target_path, section_target, state)? {
-            return do_track_managed(target_path, entry, &key, section_source, repo_root, state)
+            return do_track_managed(target_path, entry, &key, repo_root, state)
                 .map(Some);
         }
     }
@@ -103,17 +103,20 @@ fn do_track_managed(
     target_path: &Path,
     entry: &crate::state::AppliedEntry,
     key: &str,
-    default_source_dir: &str,
     repo_root: &Path,
     state: &State,
 ) -> anyhow::Result<ExitCode> {
-    // Determine source path from state or derive from convention
-    let source_path = if let Some(ref source_rel) = entry.source {
-        repo_root.join(source_rel)
-    } else {
-        let filename = key.strip_prefix('.').unwrap_or(key);
-        repo_root.join(default_source_dir).join(filename)
+    let source_rel = match entry.source.as_deref() {
+        Some(source_rel) => source_rel,
+        None => {
+            eprintln!(
+                "This file was applied by an older version of nostos before source paths were recorded."
+            );
+            eprintln!("Run `nostos apply` to refresh state, then re-run `nostos track`.");
+            return Ok(ExitCode::from(3));
+        }
     };
+    let source_path = repo_root.join(source_rel);
 
     if let Some(parent) = source_path.parent() {
         std::fs::create_dir_all(parent)

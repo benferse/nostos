@@ -774,6 +774,46 @@ fn track_managed_file_updates_source_and_state() {
 }
 
 #[test]
+fn track_managed_file_without_recorded_source_exits_with_guidance() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# original");
+
+    // Apply once so target exists and state path is initialized.
+    fix.nostos().arg("apply").assert().success();
+
+    // Simulate legacy state entry written before source tracking.
+    let state_path = fix.dir.path().join("xdg-config/nostos/state.toml");
+    fs::write(
+        &state_path,
+        r#"[applied]
+".bashrc" = { hash = "sha256:abc123", timestamp = "2026-04-26T20:00:00Z" }
+"#,
+    )
+    .unwrap();
+
+    // Edit target then try to track; this must be rejected.
+    fix.add_target(".bashrc", "# user edited version");
+    let target_path = fix.target_dir().join(".bashrc");
+    fix.nostos()
+        .arg("track")
+        .arg(&target_path)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "This file was applied by an older version of nostos before source paths were recorded.",
+        ))
+        .stderr(predicate::str::contains(
+            "Run `nostos apply` to refresh state, then re-run `nostos track`.",
+        ));
+
+    // Source remains unchanged because tracking was refused.
+    assert_eq!(
+        fs::read_to_string(fix.dir.path().join("dotfiles").join("bashrc")).unwrap(),
+        "# original"
+    );
+}
+
+#[test]
 fn track_new_dotfile_copies_without_dot() {
     let fix = TestFixture::new().with_default_config();
 
