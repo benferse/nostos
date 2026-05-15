@@ -182,6 +182,101 @@ fn init_with_machine_flag() {
 }
 
 #[test]
+#[cfg(unix)]
+fn init_with_machine_flag_no_fallback_warning() {
+    let dir = TempDir::new().unwrap();
+    let bare = create_bare_repo(dir.path());
+    let fake_home = dir.path().join("fakehome");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    // Even with hostname detection suppressed, --machine should skip the fallback entirely
+    let restricted_bin = dir.path().join("restricted-bin");
+    fs::create_dir_all(&restricted_bin).unwrap();
+    std::os::unix::fs::symlink("/usr/bin/git", restricted_bin.join("git")).unwrap();
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .env_remove("HOSTNAME")
+        .env_remove("COMPUTERNAME")
+        .env("PATH", &restricted_bin)
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .arg("--machine")
+        .arg("my-server")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Could not detect hostname").not());
+
+    let state_path = fake_home.join("xdg-config/nostos/state.toml");
+    let state_content = fs::read_to_string(&state_path).unwrap();
+    assert!(state_content.contains("my-server"));
+}
+
+#[test]
+fn init_no_warning_when_hostname_detected() {
+    let dir = TempDir::new().unwrap();
+    let bare = create_bare_repo(dir.path());
+    let fake_home = dir.path().join("fakehome");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .env("HOSTNAME", "test-host")
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Machine:    test-host"))
+        .stderr(predicate::str::contains("Could not detect hostname").not());
+}
+
+#[test]
+#[cfg(unix)]
+fn init_warns_on_hostname_fallback() {
+    let dir = TempDir::new().unwrap();
+    let bare = create_bare_repo(dir.path());
+    let fake_home = dir.path().join("fakehome");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    // Build a minimal PATH that includes git but not hostname
+    let restricted_bin = dir.path().join("restricted-bin");
+    fs::create_dir_all(&restricted_bin).unwrap();
+    std::os::unix::fs::symlink("/usr/bin/git", restricted_bin.join("git")).unwrap();
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .env_remove("HOSTNAME")
+        .env_remove("COMPUTERNAME")
+        .env("PATH", &restricted_bin)
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Could not detect hostname"))
+        .stderr(predicate::str::contains("nostos init --machine"));
+
+    // Machine identity should still be set to "unknown"
+    let state_path = fake_home.join("xdg-config/nostos/state.toml");
+    let state_content = fs::read_to_string(&state_path).unwrap();
+    assert!(state_content.contains("id = \"unknown\""));
+}
+
+#[test]
 fn init_target_exists_errors() {
     let dir = TempDir::new().unwrap();
     let bare = create_bare_repo(dir.path());

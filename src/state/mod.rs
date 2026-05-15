@@ -70,7 +70,14 @@ impl State {
     /// Ensure machine identity is set. If not already present, detect from hostname.
     pub fn ensure_machine_identity(&mut self) {
         if self.machine.is_none() {
-            let id = detect_hostname().unwrap_or_else(|| "unknown".to_string());
+            let id = match detect_hostname() {
+                Some(name) => name,
+                None => {
+                    eprintln!("Warning: Could not detect hostname \u{2014} machine identity set to 'unknown'.");
+                    eprintln!("Use `nostos init --machine <name>` to set explicitly.");
+                    "unknown".to_string()
+                }
+            };
             self.machine = Some(MachineInfo { id });
         }
     }
