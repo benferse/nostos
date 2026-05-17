@@ -123,7 +123,57 @@ pub fn parse(content: &str, path: &Path) -> Result<Config, Error> {
         }
     })?;
 
+    for warning in collect_target_overlap_warnings(&config) {
+        eprintln!("{warning}");
+    }
+
     Ok(config)
+}
+
+fn collect_target_overlap_warnings(config: &Config) -> Vec<String> {
+    let (Some(dotfiles), Some(files)) = (config.dotfiles.as_ref(), config.files.as_ref()) else {
+        return Vec::new();
+    };
+
+    let Some(dotfiles_expanded) = expand_tilde_for_config(&dotfiles.target) else {
+        return Vec::new();
+    };
+    let Some(files_expanded) = expand_tilde_for_config(&files.target) else {
+        return Vec::new();
+    };
+
+    if dotfiles_expanded == files_expanded {
+        return Vec::new();
+    }
+
+    if files_expanded.starts_with(&dotfiles_expanded) {
+        return vec![format!(
+            "warning: [files].target (\"{}\") is nested inside [dotfiles].target (\"{}\") — overlapping targets may cause ambiguous routing in `track`",
+            files.target, dotfiles.target
+        )];
+    }
+
+    if dotfiles_expanded.starts_with(&files_expanded) {
+        return vec![format!(
+            "warning: [dotfiles].target (\"{}\") is nested inside [files].target (\"{}\") — overlapping targets may cause ambiguous routing in `track`",
+            dotfiles.target, files.target
+        )];
+    }
+
+    Vec::new()
+}
+
+fn expand_tilde_for_config(path: &str) -> Option<PathBuf> {
+    if path == "~" || path.starts_with("~/") {
+        let home = dirs::home_dir()?;
+        if path == "~" {
+            Some(home)
+        } else {
+            Some(home.join(&path[2..]))
+        }
+    } else {
+        Some(PathBuf::from(path))
+    }
 }
 
 #[cfg(test)]
@@ -544,5 +594,64 @@ mod tests {
         let path = Path::new("my-repo/nostos.toml");
         let root = repo_root_from_config(path);
         assert_eq!(root, Path::new("my-repo"));
+    }
+
+    #[test]
+    fn overlapping_targets_warn_when_files_nested_in_dotfiles() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [files]
+            source = "files/"
+            target = "~/projects"
+            "#,
+        )
+        .expect("should parse");
+
+        let warnings = collect_target_overlap_warnings(&config);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("[files].target (\"~/projects\") is nested inside [dotfiles].target (\"~\")"));
+        assert!(warnings[0].contains("ambiguous routing in `track`"));
+    }
+
+    #[test]
+    fn non_overlapping_targets_do_not_warn() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [files]
+            source = "files/"
+            target = "/etc/myapp"
+            "#,
+        )
+        .expect("should parse");
+
+        let warnings = collect_target_overlap_warnings(&config);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn identical_targets_do_not_warn() {
+        let config = parse_str(
+            r#"
+            [dotfiles]
+            source = "dotfiles/"
+            target = "~"
+
+            [files]
+            source = "files/"
+            target = "~"
+            "#,
+        )
+        .expect("should parse");
+
+        let warnings = collect_target_overlap_warnings(&config);
+        assert!(warnings.is_empty());
     }
 }
