@@ -425,6 +425,53 @@ fn status_with_invalid_config() {
         .stderr(predicate::str::contains("parse"));
 }
 
+#[test]
+fn status_warns_on_overlapping_section_targets() {
+    let fix = TestFixture::new().with_config(
+        r#"
+        [dotfiles]
+        source = "dotfiles/"
+        target = "~"
+
+        [files]
+        source = "files/"
+        target = "~/projects"
+        "#,
+    );
+    fs::create_dir_all(fix.dir.path().join("files")).unwrap();
+
+    fix.nostos()
+        .arg("status")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: [files].target (\"~/projects\") is nested inside [dotfiles].target (\"~\")",
+        ))
+        .stderr(predicate::str::contains("ambiguous routing in `track`"));
+}
+
+#[test]
+fn status_with_identical_targets_does_not_warn() {
+    let fix = TestFixture::new().with_config(
+        r#"
+        [dotfiles]
+        source = "dotfiles/"
+        target = "~"
+
+        [files]
+        source = "files/"
+        target = "~"
+        "#,
+    );
+    fs::create_dir_all(fix.dir.path().join("files")).unwrap();
+
+    fix.nostos()
+        .arg("status")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("overlapping targets").not());
+}
+
 // ── Plan tests ───────────────────────────────────────────
 
 #[test]
