@@ -1,6 +1,7 @@
 //! CLI integration tests — single-command tests for status, plan, apply.
 
 use assert_cmd::Command;
+use nostos::state::State;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
@@ -120,10 +121,20 @@ fn create_bare_repo(dir: &std::path::Path) -> std::path::PathBuf {
     bare
 }
 
+fn state_path(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("xdg-config/nostos/state.toml")
+}
+
+fn write_state_repo_path(home: &std::path::Path, repo_path: &std::path::Path) {
+    let mut state = State::default();
+    state.set_repo_path(repo_path.to_string_lossy().into_owned());
+    state.save_to(&state_path(home)).unwrap();
+}
+
 // ── Init tests ───────────────────────────────────────────
 
 #[test]
-fn init_clones_repo_and_sets_state() {
+fn init_clones_to_default_dest_and_sets_state() {
     let dir = TempDir::new().unwrap();
     let bare = create_bare_repo(dir.path());
     let fake_home = dir.path().join("fakehome");
@@ -148,9 +159,9 @@ fn init_clones_repo_and_sets_state() {
     assert!(fake_home.join(".dotfiles").exists());
 
     // State file should contain repo path and machine identity
-    let state_path = fake_home.join("xdg-config/nostos/state.toml");
+    let state_path = state_path(&fake_home);
     let state_content = fs::read_to_string(&state_path).unwrap();
-    assert!(state_content.contains(".dotfiles"));
+    assert!(state_content.contains(fake_home.join(".dotfiles").to_string_lossy().as_ref()));
     assert!(state_content.contains("[machine]"));
 }
 
@@ -277,11 +288,14 @@ fn init_warns_on_hostname_fallback() {
 }
 
 #[test]
-fn init_target_exists_errors() {
+fn init_errors_when_state_records_existing_repo_path() {
     let dir = TempDir::new().unwrap();
     let bare = create_bare_repo(dir.path());
     let fake_home = dir.path().join("fakehome");
-    fs::create_dir_all(fake_home.join(".dotfiles")).unwrap();
+    let existing_repo = dir.path().join("existing-dotfiles");
+    fs::create_dir_all(&fake_home).unwrap();
+    fs::create_dir_all(&existing_repo).unwrap();
+    write_state_repo_path(&fake_home, &existing_repo);
 
     Command::cargo_bin("nostos")
         .unwrap()
@@ -294,7 +308,62 @@ fn init_target_exists_errors() {
         .arg(bare.to_str().unwrap())
         .assert()
         .code(3)
-        .stderr(predicate::str::contains("Target directory already exists"));
+        .stderr(predicate::str::contains("nostos sync"))
+        .stderr(predicate::str::contains(existing_repo.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn init_allows_recovery_when_state_repo_path_is_missing() {
+    let dir = TempDir::new().unwrap();
+    let bare = create_bare_repo(dir.path());
+    let fake_home = dir.path().join("fakehome");
+    let missing_repo = dir.path().join("missing-dotfiles");
+    fs::create_dir_all(&fake_home).unwrap();
+    write_state_repo_path(&fake_home, &missing_repo);
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .assert()
+        .success();
+
+    assert!(fake_home.join(".dotfiles").exists());
+    let state_content = fs::read_to_string(state_path(&fake_home)).unwrap();
+    assert!(state_content.contains(fake_home.join(".dotfiles").to_string_lossy().as_ref()));
+}
+
+#[test]
+fn init_with_dest_flag_clones_to_custom_path() {
+    let dir = TempDir::new().unwrap();
+    let bare = create_bare_repo(dir.path());
+    let fake_home = dir.path().join("fakehome");
+    let custom_dest = dir.path().join("custom-dotfiles");
+    fs::create_dir_all(&fake_home).unwrap();
+
+    Command::cargo_bin("nostos")
+        .unwrap()
+        .env("HOME", &fake_home)
+        .env(
+            "XDG_CONFIG_HOME",
+            fake_home.join("xdg-config").to_str().unwrap(),
+        )
+        .arg("init")
+        .arg(bare.to_str().unwrap())
+        .arg("--dest")
+        .arg(&custom_dest)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(custom_dest.to_string_lossy().as_ref()));
+
+    assert!(custom_dest.exists());
+    let state_content = fs::read_to_string(state_path(&fake_home)).unwrap();
+    assert!(state_content.contains(custom_dest.to_string_lossy().as_ref()));
 }
 
 #[test]

@@ -3,12 +3,21 @@ use crate::state::{MachineInfo, State};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-pub fn run(url: String, machine: Option<String>, apply: bool) -> anyhow::Result<ExitCode> {
-    let dest = default_dotfiles_path()?;
+pub fn run(
+    url: String,
+    machine: Option<String>,
+    apply: bool,
+    dest: Option<PathBuf>,
+) -> anyhow::Result<ExitCode> {
+    let dest = dest.unwrap_or(default_dotfiles_path()?);
+    let mut state = State::load().unwrap_or_default();
 
-    if dest.exists() {
+    if let Some(repo_path) = state.repo_path().map(PathBuf::from)
+        && repo_path.exists()
+    {
         eprintln!(
-            "Target directory already exists — use `nostos sync` to update an existing repo"
+            "nostos is already initialized at {} — use `nostos sync` to update an existing repo",
+            repo_path.display()
         );
         return Ok(ExitCode::from(3));
     }
@@ -19,9 +28,6 @@ pub fn run(url: String, machine: Option<String>, apply: bool) -> anyhow::Result<
         eprintln!("Error: {e}");
         return Ok(ExitCode::from(3));
     }
-
-    // Load or create state
-    let mut state = State::load().unwrap_or_default();
 
     // Set machine identity
     if let Some(ref id) = machine {
@@ -48,10 +54,7 @@ pub fn run(url: String, machine: Option<String>, apply: bool) -> anyhow::Result<
     println!();
     println!("Repository: {}", dest.display());
     println!("Platform:   {platform}");
-    println!(
-        "Machine:    {}",
-        state.machine_id().unwrap_or("unknown")
-    );
+    println!("Machine:    {}", state.machine_id().unwrap_or("unknown"));
     println!("Files:      {file_count} would be applied");
 
     if apply {
