@@ -142,6 +142,45 @@ fn commit_returns_nothing_to_commit_on_clean_tree() {
 }
 
 #[test]
+fn changed_paths_lists_repo_relative_files() {
+    require_git!();
+    let dir = TempDir::new().unwrap();
+    init_repo(dir.path());
+
+    fs::create_dir_all(dir.path().join("dotfiles")).unwrap();
+    fs::write(dir.path().join("dotfiles/bashrc"), "content").unwrap();
+    fs::write(dir.path().join("gitconfig"), "content").unwrap();
+
+    let paths = git::changed_paths(dir.path()).unwrap();
+
+    assert_eq!(paths, vec!["dotfiles/bashrc", "gitconfig"]);
+}
+
+#[test]
+fn changed_paths_reports_rename_destination() {
+    require_git!();
+    let dir = TempDir::new().unwrap();
+    init_repo(dir.path());
+
+    fs::write(dir.path().join("old name.txt"), "content").unwrap();
+    git::commit(dir.path(), "initial").unwrap();
+    fs::rename(
+        dir.path().join("old name.txt"),
+        dir.path().join("new name.txt"),
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["add", "--all"])
+        .current_dir(dir.path())
+        .output()
+        .expect("git add failed");
+
+    let paths = git::changed_paths(dir.path()).unwrap();
+
+    assert_eq!(paths, vec!["new name.txt"]);
+}
+
+#[test]
 fn clone_creates_working_copy() {
     require_git!();
     let remote_dir = TempDir::new().unwrap();

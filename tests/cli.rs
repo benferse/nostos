@@ -1294,6 +1294,22 @@ fn run_git(cwd: &std::path::Path, args: &[&str]) {
     );
 }
 
+fn run_git_stdout(cwd: &std::path::Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("git should be available");
+    assert!(
+        out.status.success(),
+        "git {:?} in {} failed: {}",
+        args,
+        cwd.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).expect("git stdout should be utf-8")
+}
+
 #[test]
 fn track_no_dotfiles_section_errors() {
     let fix = TestFixture::new();
@@ -1398,10 +1414,17 @@ fn sync_dirty_working_tree_auto_commits() {
     .unwrap();
 
     fix.nostos_sync()
+        .env("HOSTNAME", "work-macbook")
         .assert()
         .success()
         .stdout(predicate::str::contains("Committed local changes"))
         .stdout(predicate::str::contains("Pushed to remote"));
+
+    let message = run_git_stdout(&fix.local_path(), &["log", "-1", "--pretty=%s"]);
+    assert_eq!(
+        message.trim(),
+        "nostos: auto-sync from work-macbook — 1 file(s): vimrc"
+    );
 }
 
 #[test]
