@@ -34,6 +34,9 @@ pub enum Command {
         /// Apply dotfiles after cloning
         #[arg(long)]
         apply: bool,
+        /// Destination path for the cloned dotfiles repo
+        #[arg(long)]
+        dest: Option<std::path::PathBuf>,
     },
     /// Show platform info and config validity
     Status,
@@ -58,7 +61,12 @@ pub enum Command {
 pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     let repo = cli.repo.as_deref();
     match cli.command {
-        Command::Init { url, machine, apply } => init::run(url, machine, apply),
+        Command::Init {
+            url,
+            machine,
+            apply,
+            dest,
+        } => init::run(url, machine, apply, dest),
         Command::Status => status::run(repo),
         Command::Plan => plan::run(repo),
         Command::Apply => apply::run(repo),
