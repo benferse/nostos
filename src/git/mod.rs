@@ -45,7 +45,9 @@ pub enum Error {
     },
 
     /// Git reported an authentication failure.
-    #[error("authentication failed for remote in {path} — check your SSH keys or credential manager")]
+    #[error(
+        "authentication failed for remote in {path} — check your SSH keys or credential manager"
+    )]
     AuthFailed {
         /// The repository path.
         path: String,
@@ -54,6 +56,29 @@ pub enum Error {
     /// A network error prevented the git operation from completing.
     #[error("network error in {path} — check your connection and try again")]
     NetworkError {
+        /// The repository path.
+        path: String,
+    },
+
+    /// The repository is on a detached HEAD and not currently on a branch.
+    #[error("detached HEAD in {path} — check out a branch, then re-run nostos")]
+    NotOnBranch {
+        /// The repository path.
+        path: String,
+    },
+
+    /// The current branch has no upstream configured.
+    #[error("current branch has no upstream in {path} — run `git push -u origin <branch>` first")]
+    NoUpstream {
+        /// The repository path.
+        path: String,
+    },
+
+    /// The repository has no remote configured.
+    #[error(
+        "no remote configured for repository in {path} — add one with `git remote add origin <url>`"
+    )]
+    NoRemote {
         /// The repository path.
         path: String,
     },
@@ -312,6 +337,26 @@ fn classify_error(operation: &str, path: &str, stderr: &str) -> Error {
         };
     }
 
+    if lower.contains("not currently on a branch") {
+        return Error::NotOnBranch {
+            path: path.to_string(),
+        };
+    }
+
+    if lower.contains("has no upstream branch") || lower.contains("no tracking information") {
+        return Error::NoUpstream {
+            path: path.to_string(),
+        };
+    }
+
+    if lower.contains("no remote repository specified")
+        || lower.contains("no configured push destination")
+    {
+        return Error::NoRemote {
+            path: path.to_string(),
+        };
+    }
+
     if lower.contains("could not resolve host")
         || lower.contains("unable to access")
         || lower.contains("connection refused")
@@ -326,5 +371,60 @@ fn classify_error(operation: &str, path: &str, stderr: &str) -> Error {
         operation: operation.to_string(),
         path: path.to_string(),
         message: stderr.trim().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PATH: &str = "/repo";
+
+    #[test]
+    fn classify_error_detects_detached_head() {
+        let err = classify_error("pull", PATH, "You are not currently on a branch.");
+
+        assert!(matches!(err, Error::NotOnBranch { .. }));
+        assert_eq!(
+            err.to_string(),
+            "detached HEAD in /repo — check out a branch, then re-run nostos"
+        );
+    }
+
+    #[test]
+    fn classify_error_detects_missing_upstream() {
+        let err = classify_error(
+            "push",
+            PATH,
+            "fatal: The current branch main has no upstream branch.",
+        );
+
+        assert!(matches!(err, Error::NoUpstream { .. }));
+        assert_eq!(
+            err.to_string(),
+            "current branch has no upstream in /repo — run `git push -u origin <branch>` first"
+        );
+    }
+
+    #[test]
+    fn classify_error_detects_missing_tracking_information() {
+        let err = classify_error(
+            "pull",
+            PATH,
+            "There is no tracking information for the current branch.",
+        );
+
+        assert!(matches!(err, Error::NoUpstream { .. }));
+    }
+
+    #[test]
+    fn classify_error_detects_missing_remote() {
+        let err = classify_error("push", PATH, "fatal: No configured push destination.");
+
+        assert!(matches!(err, Error::NoRemote { .. }));
+        assert_eq!(
+            err.to_string(),
+            "no remote configured for repository in /repo — add one with `git remote add origin <url>`"
+        );
     }
 }
