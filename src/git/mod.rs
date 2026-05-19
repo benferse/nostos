@@ -165,6 +165,34 @@ pub fn is_clean(repo: &Path) -> Result<bool, Error> {
     Ok(output.trim().is_empty())
 }
 
+/// Return repo-relative paths for changed files from `git status --porcelain=v1 -z`.
+///
+/// Uses `--untracked-files=all` so untracked directories are expanded to files,
+/// and `--find-renames` so rename entries report their destination path.
+pub fn changed_paths(repo: &Path) -> Result<Vec<String>, Error> {
+    ensure_repo(repo)?;
+
+    let output = Command::new("git")
+        .args([
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--find-renames",
+            "-z",
+        ])
+        .current_dir(repo)
+        .output()
+        .map_err(|_| Error::GitNotFound)?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let path = repo.display().to_string();
+        return Err(classify_error("status", &path, &stderr));
+    }
+
+    Ok(parse_porcelain_paths(&output.stdout))
+}
+
 /// Stage all changes and commit with the given message.
 ///
 /// Returns [`CommitOutcome::NothingToCommit`] if the working tree is already
@@ -316,6 +344,29 @@ fn run_git(repo: &Path, args: &[&str]) -> Result<String, Error> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn parse_porcelain_paths(output: &[u8]) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut entries = output
+        .split(|byte| *byte == b'\0')
+        .filter(|entry| !entry.is_empty());
+
+    while let Some(entry) = entries.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+
+        paths.push(String::from_utf8_lossy(&entry[3..]).to_string());
+
+        let x = entry[0] as char;
+        let y = entry[1] as char;
+        if matches!(x, 'R' | 'C') || matches!(y, 'R' | 'C') {
+            let _ = entries.next();
+        }
+    }
+
+    paths
 }
 
 /// Classify a git stderr message into a typed error variant.

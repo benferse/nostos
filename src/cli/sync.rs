@@ -19,8 +19,16 @@ pub fn run(repo: Option<&Path>, apply: bool) -> anyhow::Result<ExitCode> {
     let mut state = State::load().unwrap_or_default();
     state.ensure_machine_identity();
     let machine_id = state.machine_id().unwrap_or("unknown");
+    let changed_paths = match git::changed_paths(&repo_path) {
+        Ok(paths) => paths,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+    let commit_message = build_auto_sync_commit_message(machine_id, &changed_paths);
 
-    match git::commit(&repo_path, &format!("nostos: auto-sync from {machine_id}")) {
+    match git::commit(&repo_path, &commit_message) {
         Ok(git::CommitOutcome::Committed) => {
             println!("Committed local changes");
         }
@@ -68,6 +76,44 @@ fn resolve_repo_path(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
     anyhow::bail!("No repo path configured — run `nostos init` first");
 }
 
+fn build_auto_sync_commit_message(machine_id: &str, changed_paths: &[String]) -> String {
+    let prefix = format!("nostos: auto-sync from {machine_id}");
+    if changed_paths.is_empty() {
+        return prefix;
+    }
+
+    let filenames: Vec<String> = changed_paths
+        .iter()
+        .map(|path| leaf_filename(path))
+        .collect();
+    let total = filenames.len();
+    let shown = total.min(3);
+    let remaining = total.saturating_sub(shown);
+    let summary = format_filename_summary(&filenames[..shown], remaining);
+
+    format!("{prefix} — {total} file(s): {summary}")
+}
+
+fn leaf_filename(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string())
+}
+
+fn format_filename_summary(filenames: &[String], remaining: usize) -> String {
+    match filenames {
+        [] => String::new(),
+        [only] if remaining == 0 => only.clone(),
+        [first, second] if remaining == 0 => format!("{first} and {second}"),
+        [first, second, third] if remaining == 0 => format!("{first}, {second}, and {third}"),
+        _ => {
+            let listed = filenames.join(", ");
+            format!("{listed}, and {remaining} more")
+        }
+    }
+}
+
 fn run_apply(repo_path: &Path, state: &mut State) -> anyhow::Result<()> {
     let config_path = repo_path.join("nostos.toml");
     let cfg = match config::load(&config_path) {
@@ -105,4 +151,64 @@ fn run_apply(repo_path: &Path, state: &mut State) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_auto_sync_commit_message;
+
+    #[test]
+    fn auto_sync_commit_message_uses_leaf_filenames() {
+        let changed = vec![
+            "dotfiles/bashrc".to_string(),
+            "config/git/gitconfig".to_string(),
+        ];
+
+        let message = build_auto_sync_commit_message("work-macbook", &changed);
+
+        assert_eq!(
+            message,
+            "nostos: auto-sync from work-macbook — 2 file(s): bashrc and gitconfig"
+        );
+    }
+
+    #[test]
+    fn auto_sync_commit_message_lists_three_filenames() {
+        let changed = vec![
+            "dotfiles/bashrc".to_string(),
+            "dotfiles/gitconfig".to_string(),
+            "dotfiles/zshrc".to_string(),
+        ];
+
+        let message = build_auto_sync_commit_message("work-macbook", &changed);
+
+        assert_eq!(
+            message,
+            "nostos: auto-sync from work-macbook — 3 file(s): bashrc, gitconfig, and zshrc"
+        );
+    }
+
+    #[test]
+    fn auto_sync_commit_message_appends_remaining_count() {
+        let changed = vec![
+            "dotfiles/bashrc".to_string(),
+            "dotfiles/gitconfig".to_string(),
+            "dotfiles/zshrc".to_string(),
+            "dotfiles/tmux.conf".to_string(),
+        ];
+
+        let message = build_auto_sync_commit_message("work-macbook", &changed);
+
+        assert_eq!(
+            message,
+            "nostos: auto-sync from work-macbook — 4 file(s): bashrc, gitconfig, zshrc, and 1 more"
+        );
+    }
+
+    #[test]
+    fn auto_sync_commit_message_falls_back_to_prefix_when_clean() {
+        let message = build_auto_sync_commit_message("work-macbook", &[]);
+
+        assert_eq!(message, "nostos: auto-sync from work-macbook");
+    }
 }
