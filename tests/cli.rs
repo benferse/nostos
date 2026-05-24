@@ -1791,6 +1791,59 @@ fn track_directory_prints_correct_summary_with_mixed_counts() {
         .stdout(predicate::str::contains("Tracked 3 files: 2 updated, 1 new"));
 }
 
+#[cfg(unix)]
+#[test]
+fn track_directory_skips_symlinks_with_warning() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# original bash");
+
+    fix.nostos().arg("apply").assert().success();
+    fix.add_target(".bashrc", "# edited bash");
+
+    std::os::unix::fs::symlink(".bashrc", fix.target_dir().join(".zshrc")).unwrap();
+
+    let target_dir = fix.target_dir();
+    fix.nostos()
+        .arg("track")
+        .arg(&target_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Tracked 1 files: 1 updated, 0 new"))
+        .stdout(predicate::str::contains("Skipped 1 symlinks"))
+        .stderr(predicate::str::contains("skipping symlink: .zshrc"));
+
+    let bash_src = fs::read_to_string(fix.dir.path().join("dotfiles/bashrc")).unwrap();
+    assert_eq!(bash_src, "# edited bash");
+    assert!(!fix.dir.path().join("dotfiles/zshrc").exists());
+}
+
+#[test]
+fn track_directory_skips_git_directory_silently() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# original bash");
+
+    fix.nostos().arg("apply").assert().success();
+    fix.add_target(".bashrc", "# edited bash");
+
+    let git_dir = fix.target_dir().join(".git");
+    fs::create_dir_all(git_dir.join("hooks")).unwrap();
+    fs::write(git_dir.join("hooks/pre-commit"), "#!/bin/sh\nexit 0\n").unwrap();
+
+    let target_dir = fix.target_dir();
+    fix.nostos()
+        .arg("track")
+        .arg(&target_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Tracked 1 files: 1 updated, 0 new"))
+        .stdout(predicate::str::contains("Skipped").not())
+        .stderr(predicate::str::contains("skipping").not());
+
+    let bash_src = fs::read_to_string(fix.dir.path().join("dotfiles/bashrc")).unwrap();
+    assert_eq!(bash_src, "# edited bash");
+    assert!(!fix.dir.path().join("dotfiles/git").exists());
+}
+
 #[test]
 fn track_prune_flag_ignored_for_single_file() {
     let fix = TestFixture::new().with_default_config();
