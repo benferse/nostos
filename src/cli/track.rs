@@ -1,10 +1,11 @@
 use crate::config;
 use crate::reconcile::dotfiles::{expand_tilde, hash_file, walk_dir};
 use crate::state::{AppliedEntry, State};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub fn run(repo: Option<&Path>, path: PathBuf) -> anyhow::Result<ExitCode> {
+pub fn run(repo: Option<&Path>, path: PathBuf, prune: bool) -> anyhow::Result<ExitCode> {
     let state = State::load().unwrap_or_default();
 
     // Resolve repo root: explicit flag > state > cwd (if nostos.toml exists)
@@ -39,13 +40,13 @@ pub fn run(repo: Option<&Path>, path: PathBuf) -> anyhow::Result<ExitCode> {
             .map_err(|e| anyhow::anyhow!("cannot determine current directory: {e}"))?
             .join(&path)
     };
-    let target_path = target_path.canonicalize().map_err(|e| {
-        anyhow::anyhow!("cannot resolve path {}: {e}", path.display())
-    })?;
+    let target_path = target_path
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("cannot resolve path {}: {e}", path.display()))?;
 
     // Directory detection: if path is a directory, enter recursive mode
     if target_path.is_dir() {
-        return track_directory(&target_path, &cfg, &repo_root, &state);
+        return track_directory(&target_path, &cfg, &repo_root, &state, prune);
     }
 
     // Try to find the file in state (managed file case)
@@ -63,6 +64,7 @@ fn track_directory(
     cfg: &config::Config,
     repo_root: &Path,
     state: &State,
+    prune: bool,
 ) -> anyhow::Result<ExitCode> {
     // Walk the target directory
     let (files, skips) = walk_dir(target_dir)
@@ -78,76 +80,114 @@ fn track_directory(
     // Resolve configured target directories (expanded and canonicalized)
     let sections = resolve_sections(cfg)?;
 
-    let mut updated = 0u32;
-    let mut new_count = 0u32;
-    let mut errors: Vec<String> = Vec::new();
-    let mut state = state.clone();
-
+    let mut planned = Vec::new();
+    let mut encountered_targets = HashSet::new();
     for rel_file in &files {
         let abs_file = target_dir.join(rel_file.replace('/', std::path::MAIN_SEPARATOR_STR));
+        encountered_targets.insert(abs_file.clone());
 
         // Try to route this file to a config section
         let Some(routing) = route_file(&abs_file, &sections)? else {
             continue;
         };
 
-        // Check if this file is already managed (in state)
-        let state_key = &routing.state_key;
-        if state.applied.contains_key(state_key) {
-            // Managed file: copy target → source, update state
-            let source_rel = match state.applied[state_key].source.as_deref() {
-                Some(s) => s.to_string(),
-                None => routing.source_rel.clone(),
-            };
-            let source_path = repo_root.join(&source_rel);
+        let is_managed = state.applied.contains_key(&routing.state_key);
+        planned.push(PlannedTrack {
+            abs_file,
+            state_key: routing.state_key,
+            source_rel: routing.source_rel,
+            is_managed,
+        });
+    }
 
-            if let Err(e) = copy_file(&abs_file, &source_path) {
-                errors.push(format!("{}: {e}", abs_file.display()));
+    let orphans = find_orphans(target_dir, repo_root, &sections, &encountered_targets)?;
+    if !orphans.is_empty() && !prune {
+        eprintln!("Orphaned source files found:");
+        for orphan in &orphans {
+            eprintln!("{}", orphan.source_rel);
+        }
+        return Ok(ExitCode::from(1));
+    }
+
+    let mut updated = 0u32;
+    let mut new_count = 0u32;
+    let mut pruned = 0u32;
+    let mut errors: Vec<String> = Vec::new();
+    let mut state = state.clone();
+
+    if prune {
+        for orphan in &orphans {
+            if let Err(e) = std::fs::remove_file(&orphan.abs_path) {
+                errors.push(format!("{}: cannot prune: {e}", orphan.abs_path.display()));
                 continue;
             }
+            state.applied.remove(&orphan.state_key);
+            pruned += 1;
+        }
+    }
 
-            let new_hash = match hash_file(&abs_file) {
-                Ok(h) => h,
-                Err(e) => {
-                    errors.push(format!("{}: cannot hash: {e}", abs_file.display()));
+    if errors.is_empty() {
+        for plan in &planned {
+            if plan.is_managed {
+                // Managed file: copy target → source, update state
+                let source_rel = match state
+                    .applied
+                    .get(&plan.state_key)
+                    .and_then(|entry| entry.source.as_deref())
+                {
+                    Some(source_rel) => source_rel.to_string(),
+                    None => plan.source_rel.clone(),
+                };
+                let source_path = repo_root.join(&source_rel);
+
+                if let Err(e) = copy_file(&plan.abs_file, &source_path) {
+                    errors.push(format!("{}: {e}", plan.abs_file.display()));
                     continue;
                 }
-            };
-            if let Some(applied) = state.applied.get_mut(state_key) {
-                applied.hash = new_hash;
-                applied.timestamp = chrono::Utc::now();
-            }
-            updated += 1;
-        } else {
-            // New file: copy target → source, create state entry
-            let source_path = repo_root.join(&routing.source_rel);
 
-            if let Err(e) = copy_file(&abs_file, &source_path) {
-                errors.push(format!("{}: {e}", abs_file.display()));
-                continue;
-            }
+                let new_hash = match hash_file(&plan.abs_file) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        errors.push(format!("{}: cannot hash: {e}", plan.abs_file.display()));
+                        continue;
+                    }
+                };
+                if let Some(applied) = state.applied.get_mut(&plan.state_key) {
+                    applied.hash = new_hash;
+                    applied.timestamp = chrono::Utc::now();
+                }
+                updated += 1;
+            } else {
+                // New file: copy target → source, create state entry
+                let source_path = repo_root.join(&plan.source_rel);
 
-            let new_hash = match hash_file(&abs_file) {
-                Ok(h) => h,
-                Err(e) => {
-                    errors.push(format!("{}: cannot hash: {e}", abs_file.display()));
+                if let Err(e) = copy_file(&plan.abs_file, &source_path) {
+                    errors.push(format!("{}: {e}", plan.abs_file.display()));
                     continue;
                 }
-            };
-            state.applied.insert(
-                state_key.clone(),
-                AppliedEntry {
-                    hash: new_hash,
-                    timestamp: chrono::Utc::now(),
-                    source: Some(routing.source_rel.clone()),
-                },
-            );
-            new_count += 1;
+
+                let new_hash = match hash_file(&plan.abs_file) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        errors.push(format!("{}: cannot hash: {e}", plan.abs_file.display()));
+                        continue;
+                    }
+                };
+                state.applied.insert(
+                    plan.state_key.clone(),
+                    AppliedEntry {
+                        hash: new_hash,
+                        timestamp: chrono::Utc::now(),
+                        source: Some(plan.source_rel.clone()),
+                    },
+                );
+                new_count += 1;
+            }
         }
     }
 
     let total = updated + new_count;
-    if total == 0 && errors.is_empty() {
+    if total == 0 && pruned == 0 && errors.is_empty() {
         println!("No files to track in {}", target_dir.display());
         if skipped_symlinks > 0 {
             println!("Skipped {skipped_symlinks} symlinks");
@@ -155,8 +195,14 @@ fn track_directory(
         return Ok(ExitCode::SUCCESS);
     }
 
-    if total > 0 && let Err(e) = state.save() {
+    if (total > 0 || pruned > 0)
+        && let Err(e) = state.save()
+    {
         eprintln!("Warning: failed to save state: {e}");
+    }
+
+    if pruned > 0 {
+        println!("Pruned {pruned} orphaned source files");
     }
 
     if total > 0 {
@@ -192,6 +238,24 @@ struct ResolvedSection {
     source_dir: String,
     /// Whether this is a dotfiles section (dot-prepend/strip applies).
     is_dotfiles: bool,
+}
+
+struct PlannedTrack {
+    abs_file: PathBuf,
+    state_key: String,
+    source_rel: String,
+    is_managed: bool,
+}
+
+struct OrphanedSource {
+    source_rel: String,
+    state_key: String,
+    abs_path: PathBuf,
+}
+
+struct SourceScope {
+    source_root: PathBuf,
+    section_rel_prefix: String,
 }
 
 /// Resolve all configured sections into expanded target paths.
@@ -272,6 +336,135 @@ fn route_file(
 }
 
 /// Copy a file, creating parent directories as needed.
+fn find_orphans(
+    target_dir: &Path,
+    repo_root: &Path,
+    sections: &[ResolvedSection],
+    encountered_targets: &HashSet<PathBuf>,
+) -> anyhow::Result<Vec<OrphanedSource>> {
+    let mut orphans = Vec::new();
+    let mut seen = HashSet::new();
+
+    for section in sections {
+        let Some(scope) = source_scope_for_track(target_dir, repo_root, section) else {
+            continue;
+        };
+        if !scope.source_root.exists() {
+            continue;
+        }
+
+        let (source_files, _skips) = walk_dir(&scope.source_root).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot walk source directory {}: {e}",
+                scope.source_root.display()
+            )
+        })?;
+
+        for source_file in source_files {
+            if source_file.starts_with("platforms/") || source_file.starts_with("machines/") {
+                continue;
+            }
+
+            let section_rel = join_rel(&scope.section_rel_prefix, &source_file);
+            let source_rel = join_repo_rel(&section.source_dir, &section_rel);
+            if !seen.insert(source_rel.clone()) {
+                continue;
+            }
+
+            let state_key = source_rel_to_state_key(&section_rel, section.is_dotfiles);
+            let target_path = section
+                .target_dir
+                .join(state_key.replace('/', std::path::MAIN_SEPARATOR_STR));
+            if target_path.starts_with(target_dir) && !encountered_targets.contains(&target_path) {
+                orphans.push(OrphanedSource {
+                    abs_path: repo_root.join(&source_rel),
+                    source_rel,
+                    state_key,
+                });
+            }
+        }
+    }
+
+    orphans.sort_by(|a, b| a.source_rel.cmp(&b.source_rel));
+    Ok(orphans)
+}
+
+fn source_scope_for_track(
+    target_dir: &Path,
+    repo_root: &Path,
+    section: &ResolvedSection,
+) -> Option<SourceScope> {
+    if let Ok(rel) = target_dir.strip_prefix(&section.target_dir) {
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let section_rel_prefix = target_rel_to_source_rel(&rel, section.is_dotfiles)?;
+        return Some(SourceScope {
+            source_root: repo_root.join(join_repo_rel(&section.source_dir, &section_rel_prefix)),
+            section_rel_prefix,
+        });
+    }
+
+    if section.target_dir.starts_with(target_dir) {
+        return Some(SourceScope {
+            source_root: repo_root.join(&section.source_dir),
+            section_rel_prefix: String::new(),
+        });
+    }
+
+    None
+}
+
+fn target_rel_to_source_rel(target_rel: &str, is_dotfiles: bool) -> Option<String> {
+    if target_rel.is_empty() {
+        return Some(String::new());
+    }
+    if !is_dotfiles {
+        return Some(target_rel.to_string());
+    }
+
+    let mut parts = target_rel.split('/');
+    let first = parts.next()?;
+    let stripped = first.strip_prefix('.')?;
+    let mut source_rel = stripped.to_string();
+    for part in parts {
+        source_rel.push('/');
+        source_rel.push_str(part);
+    }
+    Some(source_rel)
+}
+
+fn source_rel_to_state_key(source_rel: &str, is_dotfiles: bool) -> String {
+    if !is_dotfiles {
+        return source_rel.to_string();
+    }
+
+    if source_rel.is_empty() {
+        return String::new();
+    }
+
+    format!(".{source_rel}")
+}
+
+fn join_rel(prefix: &str, rel: &str) -> String {
+    if prefix.is_empty() {
+        rel.to_string()
+    } else if rel.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}/{rel}")
+    }
+}
+
+fn join_repo_rel(base: &str, rel: &str) -> String {
+    if rel.is_empty() {
+        return PathBuf::from(base).to_string_lossy().replace('\\', "/");
+    }
+
+    PathBuf::from(base)
+        .join(rel)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 fn copy_file(src: &Path, dest: &Path) -> anyhow::Result<()> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
@@ -289,8 +482,7 @@ fn resolve_managed_key<'a>(
     section_target: &str,
     state: &'a State,
 ) -> anyhow::Result<Option<(String, &'a crate::state::AppliedEntry)>> {
-    let target_base = expand_tilde(section_target)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let target_base = expand_tilde(section_target).map_err(|e| anyhow::anyhow!("{e}"))?;
     let target_base = target_base.canonicalize().unwrap_or(target_base);
     if let Ok(rel) = target_path.strip_prefix(&target_base) {
         let key = rel.to_string_lossy().replace('\\', "/");
@@ -320,8 +512,7 @@ fn try_track_managed(
 
     for section_target in sections {
         if let Some((key, entry)) = resolve_managed_key(target_path, section_target, state)? {
-            return do_track_managed(target_path, entry, &key, repo_root, state)
-                .map(Some);
+            return do_track_managed(target_path, entry, &key, repo_root, state).map(Some);
         }
     }
 
@@ -352,8 +543,13 @@ fn do_track_managed(
         std::fs::create_dir_all(parent)
             .map_err(|e| anyhow::anyhow!("cannot create directory {}: {e}", parent.display()))?;
     }
-    std::fs::copy(target_path, &source_path)
-        .map_err(|e| anyhow::anyhow!("cannot copy {} → {}: {e}", target_path.display(), source_path.display()))?;
+    std::fs::copy(target_path, &source_path).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot copy {} → {}: {e}",
+            target_path.display(),
+            source_path.display()
+        )
+    })?;
 
     let new_hash = hash_file(target_path)
         .map_err(|e| anyhow::anyhow!("cannot hash {}: {e}", target_path.display()))?;
@@ -391,10 +587,7 @@ fn copy_and_print_guidance(
     std::fs::copy(target_path, dest)
         .map_err(|e| anyhow::anyhow!("cannot copy {}: {e}", target_path.display()))?;
 
-    let rel_dest = dest
-        .strip_prefix(repo_root)
-        .unwrap_or(dest)
-        .display();
+    let rel_dest = dest.strip_prefix(repo_root).unwrap_or(dest).display();
     println!("Copied {} → {}", target_path.display(), dest.display());
     println!();
     println!("Add to nostos.toml (file is not yet managed until you do):");
@@ -474,7 +667,11 @@ fn track_new_file(
         let stripped_first = first_segment.strip_prefix('.').unwrap_or(&first_segment);
         let source_rel: PathBuf = std::iter::once(stripped_first)
             .map(|s| Path::new(s).to_path_buf())
-            .chain(rel.components().skip(1).map(|c| PathBuf::from(c.as_os_str())))
+            .chain(
+                rel.components()
+                    .skip(1)
+                    .map(|c| PathBuf::from(c.as_os_str())),
+            )
             .fold(PathBuf::new(), |acc, p| acc.join(p));
         let source_rel_str = source_rel.to_string_lossy().replace('\\', "/");
         let dest = repo_root.join(&df.source).join(&source_rel);

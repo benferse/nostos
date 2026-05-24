@@ -73,7 +73,7 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Status => status::run(repo),
         Command::Plan => plan::run(repo),
         Command::Apply => apply::run(repo),
-        Command::Track { path, prune: _ } => track::run(repo, path),
+        Command::Track { path, prune } => track::run(repo, path, prune),
         Command::Sync { apply } => sync::run(repo, apply),
     }
 }

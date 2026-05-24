@@ -105,9 +105,13 @@ fn create_bare_repo(dir: &std::path::Path) -> std::path::PathBuf {
         .expect("git add");
     std::process::Command::new("git")
         .args([
-            "-c", "user.name=test",
-            "-c", "user.email=test@test.com",
-            "commit", "-m", "initial",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@test.com",
+            "commit",
+            "-m",
+            "initial",
         ])
         .current_dir(&work)
         .output()
@@ -309,7 +313,9 @@ fn init_errors_when_state_records_existing_repo_path() {
         .assert()
         .code(3)
         .stderr(predicate::str::contains("nostos sync"))
-        .stderr(predicate::str::contains(existing_repo.to_string_lossy().as_ref()));
+        .stderr(predicate::str::contains(
+            existing_repo.to_string_lossy().as_ref(),
+        ));
 }
 
 #[test]
@@ -359,7 +365,9 @@ fn init_with_dest_flag_clones_to_custom_path() {
         .arg(&custom_dest)
         .assert()
         .success()
-        .stdout(predicate::str::contains(custom_dest.to_string_lossy().as_ref()));
+        .stdout(predicate::str::contains(
+            custom_dest.to_string_lossy().as_ref(),
+        ));
 
     assert!(custom_dest.exists());
     let state_content = fs::read_to_string(state_path(&fake_home)).unwrap();
@@ -406,9 +414,13 @@ fn init_with_apply_copies_files() {
         .expect("git add");
     std::process::Command::new("git")
         .args([
-            "-c", "user.name=test",
-            "-c", "user.email=test@test.com",
-            "commit", "-m", "initial",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@test.com",
+            "commit",
+            "-m",
+            "initial",
         ])
         .current_dir(&work)
         .output()
@@ -572,12 +584,12 @@ fn plan_with_mixed_states() {
         .arg("plan")
         .assert()
         .success()
-        .stdout(
-            predicate::str::contains("new file").and(predicate::str::contains("up to date").or(
+        .stdout(predicate::str::contains("new file").and(
+            predicate::str::contains("up to date").or(
                 // Unmanaged existing file with matching content
                 predicate::str::contains("conflict"),
-            )),
-        );
+            ),
+        ));
 }
 
 // ── Apply tests ──────────────────────────────────────────
@@ -658,11 +670,7 @@ fn apply_conflict_creates_backup() {
     let backups: Vec<_> = fs::read_dir(&home)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .contains("nostos-backup")
-        })
+        .filter(|e| e.file_name().to_string_lossy().contains("nostos-backup"))
         .collect();
     assert!(!backups.is_empty(), "backup file should exist");
 }
@@ -781,7 +789,9 @@ install.apt = "fd-find"
         .current_dir(fixture.dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("2 tool(s) declared but tool installation is not yet implemented"));
+        .stdout(predicate::str::contains(
+            "2 tool(s) declared but tool installation is not yet implemented",
+        ));
 }
 
 #[test]
@@ -811,7 +821,9 @@ when = "pre-apply"
         .current_dir(fixture.dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("hook execution is not yet implemented"));
+        .stdout(predicate::str::contains(
+            "hook execution is not yet implemented",
+        ));
 }
 
 #[test]
@@ -890,7 +902,9 @@ target = '{target}'
         .arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::contains(format!("Layers:    base + {platform}")));
+        .stdout(predicate::str::contains(format!(
+            "Layers:    base + {platform}"
+        )));
 }
 
 #[test]
@@ -1042,7 +1056,10 @@ fn track_new_dotfile_copies_without_dot() {
     // Verify file went to dotfiles source dir without the dot prefix
     let source_path = fix.dir.path().join("dotfiles").join("newrc");
     assert!(source_path.exists(), "source file should exist without dot");
-    assert_eq!(fs::read_to_string(&source_path).unwrap(), "# brand new dotfile");
+    assert_eq!(
+        fs::read_to_string(&source_path).unwrap(),
+        "# brand new dotfile"
+    );
 }
 
 #[test]
@@ -1068,7 +1085,10 @@ fn track_new_plain_file_copies_to_files_dir() {
 
     // Verify file went to files source dir with the same name
     let source_path = fix.dir.path().join("files").join("myscript");
-    assert!(source_path.exists(), "source file should exist in files dir");
+    assert!(
+        source_path.exists(),
+        "source file should exist in files dir"
+    );
     assert_eq!(
         fs::read_to_string(&source_path).unwrap(),
         "#!/bin/sh\necho hello"
@@ -1210,7 +1230,10 @@ fn apply_shared_target_no_collision_between_dotfiles_and_files() {
     fix.nostos().arg("apply").assert().success();
 
     // Dotfiles source "config/starship.toml" → target ".config/starship.toml" (dot-prepend)
-    assert_eq!(fix.read_target(".config/starship.toml"), "# dotfiles version");
+    assert_eq!(
+        fix.read_target(".config/starship.toml"),
+        "# dotfiles version"
+    );
     // Files source "config/starship.toml" → target "config/starship.toml" (verbatim)
     assert_eq!(fix.read_target("config/starship.toml"), "# files version");
 }
@@ -1264,10 +1287,7 @@ fn track_shared_target_routes_dotfile_and_plain_to_correct_sections() {
         plain_source.exists(),
         "plain file should route to files/config/starship.toml"
     );
-    assert_eq!(
-        fs::read_to_string(&plain_source).unwrap(),
-        "# from files"
-    );
+    assert_eq!(fs::read_to_string(&plain_source).unwrap(), "# from files");
 
     // Cross-contamination check: dotfiles didn't get the plain file, files didn't get the dotfile
     assert!(
@@ -1275,7 +1295,10 @@ fn track_shared_target_routes_dotfile_and_plain_to_correct_sections() {
         "files section should NOT contain .config/starship.toml"
     );
     assert!(
-        !fix.dir.path().join("dotfiles/.config/starship.toml").exists(),
+        !fix.dir
+            .path()
+            .join("dotfiles/.config/starship.toml")
+            .exists(),
         "dotfiles section should NOT contain .config/starship.toml with leading dot"
     );
 }
@@ -1310,9 +1333,7 @@ impl SyncFixture {
 
         // Seed with nostos.toml and a dotfile
         let target = home.to_string_lossy().to_string();
-        let config = format!(
-            "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n"
-        );
+        let config = format!("[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n");
         fs::write(local.join("nostos.toml"), config).unwrap();
         fs::create_dir_all(local.join("dotfiles")).unwrap();
         fs::write(local.join("dotfiles").join("bashrc"), "# initial").unwrap();
@@ -1441,7 +1462,10 @@ target = '{target}'
 
     // Create both base and platform-override source files
     fix.add_source("bashrc", "# base bashrc");
-    let platform_dir = fix.dir.path().join(format!("dotfiles/platforms/{platform}"));
+    let platform_dir = fix
+        .dir
+        .path()
+        .join(format!("dotfiles/platforms/{platform}"));
     fs::create_dir_all(&platform_dir).unwrap();
     fs::write(platform_dir.join("bashrc"), "# platform bashrc").unwrap();
 
@@ -1466,8 +1490,7 @@ target = '{target}'
     assert_eq!(platform_content, "# platform edited");
 
     // Base should be untouched
-    let base_content =
-        fs::read_to_string(fix.dir.path().join("dotfiles").join("bashrc")).unwrap();
+    let base_content = fs::read_to_string(fix.dir.path().join("dotfiles").join("bashrc")).unwrap();
     assert_eq!(base_content, "# base bashrc");
 }
 
@@ -1553,11 +1576,7 @@ fn sync_pulls_remote_commits() {
     );
     run_git(&second, &["config", "user.email", "test@example.com"]);
     run_git(&second, &["config", "user.name", "Test"]);
-    fs::write(
-        second.join("dotfiles").join("gitconfig"),
-        "# from remote",
-    )
-    .unwrap();
+    fs::write(second.join("dotfiles").join("gitconfig"), "# from remote").unwrap();
     run_git(&second, &["add", "--all"]);
     run_git(&second, &["commit", "-m", "remote commit"]);
     run_git(&second, &["push"]);
@@ -1683,10 +1702,8 @@ fn track_directory_imports_new_files_into_source_and_state() {
         .stdout(predicate::str::contains("1 new"));
 
     // Verify the new file was imported into source tree with dot stripped
-    let imported = fs::read_to_string(
-        fix.dir.path().join("dotfiles/config/nvim/init.lua"),
-    )
-    .unwrap();
+    let imported =
+        fs::read_to_string(fix.dir.path().join("dotfiles/config/nvim/init.lua")).unwrap();
     assert_eq!(imported, "-- nvim config");
 
     // Verify subsequent apply deploys it back (i.e., state was registered)
@@ -1763,7 +1780,9 @@ fn track_directory_applies_dot_strip_inversion_for_new_dotfiles() {
 
     // Verify dot was stripped: lands in dotfiles/config/alacritty/alacritty.toml
     let imported = fs::read_to_string(
-        fix.dir.path().join("dotfiles/config/alacritty/alacritty.toml"),
+        fix.dir
+            .path()
+            .join("dotfiles/config/alacritty/alacritty.toml"),
     )
     .unwrap();
     assert_eq!(imported, "[font]\nsize = 14");
@@ -1788,7 +1807,9 @@ fn track_directory_prints_correct_summary_with_mixed_counts() {
         .arg(&target_dir)
         .assert()
         .success()
-        .stdout(predicate::str::contains("Tracked 3 files: 2 updated, 1 new"));
+        .stdout(predicate::str::contains(
+            "Tracked 3 files: 2 updated, 1 new",
+        ));
 }
 
 #[cfg(unix)]
@@ -1868,4 +1889,65 @@ fn track_prune_flag_ignored_for_single_file() {
     // Source was updated
     let source = fs::read_to_string(fix.dir.path().join("dotfiles/bashrc")).unwrap();
     assert_eq!(source, "# edited");
+}
+
+#[test]
+fn track_directory_without_prune_blocks_on_orphans() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# original bash");
+    fix.add_source("gitconfig", "# original git");
+
+    fix.nostos().arg("apply").assert().success();
+
+    fs::remove_file(fix.target_dir().join(".gitconfig")).unwrap();
+    fix.add_target(".bashrc", "# edited bash");
+
+    let target_dir = fix.target_dir();
+    fix.nostos()
+        .arg("track")
+        .arg(&target_dir)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("dotfiles/gitconfig"));
+
+    let bash_src = fs::read_to_string(fix.dir.path().join("dotfiles/bashrc")).unwrap();
+    assert_eq!(bash_src, "# original bash");
+}
+
+#[test]
+fn track_directory_with_prune_removes_orphans_and_proceeds() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# original bash");
+    fix.add_source("gitconfig", "# original git");
+
+    fix.nostos().arg("apply").assert().success();
+
+    fs::remove_file(fix.target_dir().join(".gitconfig")).unwrap();
+    fix.add_target(".bashrc", "# edited bash");
+
+    let target_dir = fix.target_dir();
+    fix.nostos()
+        .arg("track")
+        .arg("--prune")
+        .arg(&target_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pruned 1 orphaned source files"))
+        .stdout(predicate::str::contains(
+            "Tracked 1 files: 1 updated, 0 new",
+        ));
+
+    assert!(!fix.dir.path().join("dotfiles/gitconfig").exists());
+    let bash_src = fs::read_to_string(fix.dir.path().join("dotfiles/bashrc")).unwrap();
+    assert_eq!(bash_src, "# edited bash");
+
+    let state = State::load_from(&state_path(fix.dir.path())).unwrap();
+    assert!(!state.applied.contains_key(".gitconfig"));
+    assert!(state.applied.contains_key(".bashrc"));
+
+    fix.nostos()
+        .arg("apply")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("up to date"));
 }
