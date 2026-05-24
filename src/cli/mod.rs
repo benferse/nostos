@@ -44,10 +44,13 @@ pub enum Command {
     Plan,
     /// Apply dotfiles from the repo to this machine
     Apply,
-    /// Track a target file back into the repo
+    /// Track a target file or directory back into the repo
     Track {
-        /// Path to the target file to track back into the repo
+        /// Path to the target file or directory to track back into the repo
         path: std::path::PathBuf,
+        /// Remove orphaned source files (only meaningful for directory track)
+        #[arg(long)]
+        prune: bool,
     },
     /// Sync the local dotfiles repo with the remote
     Sync {
@@ -70,7 +73,7 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Status => status::run(repo),
         Command::Plan => plan::run(repo),
         Command::Apply => apply::run(repo),
-        Command::Track { path } => track::run(repo, path),
+        Command::Track { path, prune: _ } => track::run(repo, path),
         Command::Sync { apply } => sync::run(repo, apply),
     }
 }
