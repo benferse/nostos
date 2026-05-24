@@ -65,8 +65,15 @@ fn track_directory(
     state: &State,
 ) -> anyhow::Result<ExitCode> {
     // Walk the target directory
-    let (files, _skips) = walk_dir(target_dir)
+    let (files, skips) = walk_dir(target_dir)
         .map_err(|e| anyhow::anyhow!("cannot walk directory {}: {e}", target_dir.display()))?;
+    let skipped_symlinks = skips
+        .iter()
+        .filter(|skip| skip.starts_with("skipping symlink: "))
+        .count();
+    for skip in &skips {
+        eprintln!("{skip}");
+    }
 
     // Resolve configured target directories (expanded and canonicalized)
     let sections = resolve_sections(cfg)?;
@@ -142,6 +149,9 @@ fn track_directory(
     let total = updated + new_count;
     if total == 0 && errors.is_empty() {
         println!("No files to track in {}", target_dir.display());
+        if skipped_symlinks > 0 {
+            println!("Skipped {skipped_symlinks} symlinks");
+        }
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -151,6 +161,9 @@ fn track_directory(
 
     if total > 0 {
         println!("Tracked {total} files: {updated} updated, {new_count} new");
+        if skipped_symlinks > 0 {
+            println!("Skipped {skipped_symlinks} symlinks");
+        }
     }
 
     if !errors.is_empty() {
