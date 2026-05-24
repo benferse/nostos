@@ -188,7 +188,7 @@ fn track_directory(
 
     let total = updated + new_count;
     if total == 0 && pruned == 0 && errors.is_empty() {
-        println!("No files to track in {}", target_dir.display());
+        println!("No files to track in {}", crate::cli::report::display_path(target_dir));
         if skipped_symlinks > 0 {
             println!("Skipped {skipped_symlinks} symlinks");
         }
@@ -566,8 +566,8 @@ fn do_track_managed(
 
     println!(
         "Tracked {} → {}",
-        target_path.display(),
-        source_path.display()
+        crate::cli::report::display_path(target_path),
+        crate::cli::report::display_path(&source_path)
     );
     Ok(ExitCode::SUCCESS)
 }
@@ -588,7 +588,11 @@ fn copy_and_print_guidance(
         .map_err(|e| anyhow::anyhow!("cannot copy {}: {e}", target_path.display()))?;
 
     let rel_dest = dest.strip_prefix(repo_root).unwrap_or(dest).display();
-    println!("Copied {} → {}", target_path.display(), dest.display());
+    println!(
+        "Copied {} → {}",
+        crate::cli::report::display_path(target_path),
+        crate::cli::report::display_path(dest)
+    );
     println!();
     println!("Add to nostos.toml (file is not yet managed until you do):");
     println!("  # The base source directory already covers this file.");
