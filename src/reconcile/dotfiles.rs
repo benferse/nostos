@@ -473,17 +473,22 @@ fn check_source_dir(source_dir: &Path) -> Result<(), Error> {
 /// entries) encountered. Symlinks are intentionally not followed: a symlink
 /// in the dotfiles tree pointing at, e.g., `/etc/passwd` would otherwise be
 /// dereferenced by `std::fs::copy` and written into the user's home as a
-/// regular file.
-pub(crate) fn walk_source_dir(dir: &Path) -> Result<(Vec<String>, Vec<String>), Error> {
+/// regular file. `.git` directories are silently excluded.
+pub(crate) fn walk_dir(dir: &Path) -> Result<(Vec<String>, Vec<String>), Error> {
     let mut files = Vec::new();
     let mut skips = Vec::new();
-    walk_recursive(dir, dir, &mut files, &mut skips)?;
+    walk_dir_recursive(dir, dir, &mut files, &mut skips)?;
     files.sort();
     skips.sort();
     Ok((files, skips))
 }
 
-fn walk_recursive(
+/// Alias preserving the original call sites.
+pub(crate) fn walk_source_dir(dir: &Path) -> Result<(Vec<String>, Vec<String>), Error> {
+    walk_dir(dir)
+}
+
+fn walk_dir_recursive(
     base: &Path,
     current: &Path,
     files: &mut Vec<String>,
@@ -511,16 +516,20 @@ fn walk_recursive(
         };
 
         if file_type.is_symlink() {
-            skips.push(format!("skipping symlink in source: {display_rel}"));
+            skips.push(format!("skipping symlink: {display_rel}"));
             continue;
         }
 
         if file_type.is_dir() {
-            walk_recursive(base, &path, files, skips)?;
+            // Skip .git directories silently
+            if path.file_name().is_some_and(|name| name == ".git") {
+                continue;
+            }
+            walk_dir_recursive(base, &path, files, skips)?;
         } else if file_type.is_file()
             && let Ok(rel) = path.strip_prefix(base)
         {
-            files.push(rel.to_string_lossy().to_string());
+            files.push(rel.to_string_lossy().replace('\\', "/"));
         }
     }
 
@@ -1253,5 +1262,68 @@ mod tests {
         let hashed = hash_file(&path).unwrap();
         let expected = format!("sha256:{:x}", Sha256::digest([]));
         assert_eq!(hashed, expected);
+    }
+
+    // ── walk_dir tests ────────────────────────────────────────
+
+    #[test]
+    fn walk_dir_returns_sorted_forward_slash_paths_for_nested_dirs() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("src");
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::write(root.join("a/b/deep.txt"), "deep").unwrap();
+        fs::write(root.join("a/top.txt"), "top").unwrap();
+        fs::write(root.join("root.txt"), "root").unwrap();
+
+        let (files, skips) = walk_source_dir(&root).unwrap();
+
+        assert_eq!(files, vec!["a/b/deep.txt", "a/top.txt", "root.txt"]);
+        assert!(skips.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_dir_skips_symlinks_with_message() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("src");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("real.txt"), "content").unwrap();
+        symlink("/tmp", root.join("link.txt")).unwrap();
+
+        let (files, skips) = walk_source_dir(&root).unwrap();
+
+        assert_eq!(files, vec!["real.txt"]);
+        assert_eq!(skips.len(), 1);
+        assert!(skips[0].contains("symlink"));
+        assert!(skips[0].contains("link.txt"));
+    }
+
+    #[test]
+    fn walk_dir_skips_git_directories_silently() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("src");
+        fs::create_dir_all(root.join(".git/objects")).unwrap();
+        fs::write(root.join(".git/HEAD"), "ref: refs/heads/main").unwrap();
+        fs::write(root.join("real.txt"), "content").unwrap();
+
+        let (files, skips) = walk_source_dir(&root).unwrap();
+
+        assert_eq!(files, vec!["real.txt"]);
+        // .git is skipped silently — no skip message
+        assert!(skips.is_empty());
+    }
+
+    #[test]
+    fn walk_dir_empty_directory_returns_empty_results() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("empty");
+        fs::create_dir_all(&root).unwrap();
+
+        let (files, skips) = walk_source_dir(&root).unwrap();
+
+        assert!(files.is_empty());
+        assert!(skips.is_empty());
     }
 }
