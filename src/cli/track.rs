@@ -1,6 +1,6 @@
 use crate::config;
-use crate::reconcile::dotfiles::{expand_tilde, hash_file};
-use crate::state::State;
+use crate::reconcile::dotfiles::{expand_tilde, hash_file, walk_dir};
+use crate::state::{AppliedEntry, State};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -43,6 +43,11 @@ pub fn run(repo: Option<&Path>, path: PathBuf) -> anyhow::Result<ExitCode> {
         anyhow::anyhow!("cannot resolve path {}: {e}", path.display())
     })?;
 
+    // Directory detection: if path is a directory, enter recursive mode
+    if target_path.is_dir() {
+        return track_directory(&target_path, &cfg, &repo_root, &state);
+    }
+
     // Try to find the file in state (managed file case)
     if let Some(result) = try_track_managed(&target_path, &cfg, &state, &repo_root)? {
         return Ok(result);
@@ -50,6 +55,218 @@ pub fn run(repo: Option<&Path>, path: PathBuf) -> anyhow::Result<ExitCode> {
 
     // New file case — use dot heuristic
     track_new_file(&target_path, &cfg, &repo_root)
+}
+
+/// Recursively track all files in a target directory back into the repo.
+fn track_directory(
+    target_dir: &Path,
+    cfg: &config::Config,
+    repo_root: &Path,
+    state: &State,
+) -> anyhow::Result<ExitCode> {
+    // Walk the target directory
+    let (files, _skips) = walk_dir(target_dir)
+        .map_err(|e| anyhow::anyhow!("cannot walk directory {}: {e}", target_dir.display()))?;
+
+    // Resolve configured target directories (expanded and canonicalized)
+    let sections = resolve_sections(cfg)?;
+
+    let mut updated = 0u32;
+    let mut new_count = 0u32;
+    let mut errors: Vec<String> = Vec::new();
+    let mut state = state.clone();
+
+    for rel_file in &files {
+        let abs_file = target_dir.join(rel_file.replace('/', std::path::MAIN_SEPARATOR_STR));
+
+        // Try to route this file to a config section
+        let Some(routing) = route_file(&abs_file, &sections)? else {
+            continue;
+        };
+
+        // Check if this file is already managed (in state)
+        let state_key = &routing.state_key;
+        if state.applied.contains_key(state_key) {
+            // Managed file: copy target → source, update state
+            let source_rel = match state.applied[state_key].source.as_deref() {
+                Some(s) => s.to_string(),
+                None => routing.source_rel.clone(),
+            };
+            let source_path = repo_root.join(&source_rel);
+
+            if let Err(e) = copy_file(&abs_file, &source_path) {
+                errors.push(format!("{}: {e}", abs_file.display()));
+                continue;
+            }
+
+            let new_hash = match hash_file(&abs_file) {
+                Ok(h) => h,
+                Err(e) => {
+                    errors.push(format!("{}: cannot hash: {e}", abs_file.display()));
+                    continue;
+                }
+            };
+            if let Some(applied) = state.applied.get_mut(state_key) {
+                applied.hash = new_hash;
+                applied.timestamp = chrono::Utc::now();
+            }
+            updated += 1;
+        } else {
+            // New file: copy target → source, create state entry
+            let source_path = repo_root.join(&routing.source_rel);
+
+            if let Err(e) = copy_file(&abs_file, &source_path) {
+                errors.push(format!("{}: {e}", abs_file.display()));
+                continue;
+            }
+
+            let new_hash = match hash_file(&abs_file) {
+                Ok(h) => h,
+                Err(e) => {
+                    errors.push(format!("{}: cannot hash: {e}", abs_file.display()));
+                    continue;
+                }
+            };
+            state.applied.insert(
+                state_key.clone(),
+                AppliedEntry {
+                    hash: new_hash,
+                    timestamp: chrono::Utc::now(),
+                    source: Some(routing.source_rel.clone()),
+                },
+            );
+            new_count += 1;
+        }
+    }
+
+    let total = updated + new_count;
+    if total == 0 && errors.is_empty() {
+        println!("No files to track in {}", target_dir.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    if total > 0 && let Err(e) = state.save() {
+        eprintln!("Warning: failed to save state: {e}");
+    }
+
+    if total > 0 {
+        println!("Tracked {total} files: {updated} updated, {new_count} new");
+    }
+
+    if !errors.is_empty() {
+        for err in &errors {
+            eprintln!("error: {err}");
+        }
+        return Ok(ExitCode::from(1));
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Routing information for a single file discovered during directory walk.
+struct FileRouting {
+    /// The key used in state.applied (target-relative with dot prepended).
+    state_key: String,
+    /// Repo-relative source path (e.g., "dotfiles/config/starship.toml").
+    source_rel: String,
+}
+
+/// A resolved config section with its expanded target directory.
+struct ResolvedSection {
+    /// Expanded + canonicalized target directory.
+    target_dir: PathBuf,
+    /// Source directory relative to repo root (e.g., "dotfiles/").
+    source_dir: String,
+    /// Whether this is a dotfiles section (dot-prepend/strip applies).
+    is_dotfiles: bool,
+}
+
+/// Resolve all configured sections into expanded target paths.
+fn resolve_sections(cfg: &config::Config) -> anyhow::Result<Vec<ResolvedSection>> {
+    let mut sections = Vec::new();
+
+    if let Some(ref df) = cfg.dotfiles {
+        let expanded = expand_tilde(&df.target).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let canonical = expanded.canonicalize().unwrap_or(expanded);
+        sections.push(ResolvedSection {
+            target_dir: canonical,
+            source_dir: df.source.clone(),
+            is_dotfiles: true,
+        });
+    }
+
+    if let Some(ref f) = cfg.files {
+        let expanded = expand_tilde(&f.target).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let canonical = expanded.canonicalize().unwrap_or(expanded);
+        sections.push(ResolvedSection {
+            target_dir: canonical,
+            source_dir: f.source.clone(),
+            is_dotfiles: false,
+        });
+    }
+
+    Ok(sections)
+}
+
+/// Route a target file to a config section using longest-prefix matching.
+fn route_file(
+    abs_path: &Path,
+    sections: &[ResolvedSection],
+) -> anyhow::Result<Option<FileRouting>> {
+    // Find the section with the longest matching target prefix
+    let mut best: Option<(usize, &ResolvedSection)> = None;
+
+    for section in sections {
+        if let Ok(rel) = abs_path.strip_prefix(&section.target_dir) {
+            let prefix_len = section.target_dir.as_os_str().len();
+            if best.is_none() || prefix_len > best.unwrap().0 {
+                best = Some((prefix_len, section));
+            }
+            let _ = rel; // used only for strip_prefix check
+        }
+    }
+
+    let Some((_, section)) = best else {
+        return Ok(None);
+    };
+
+    let rel = abs_path.strip_prefix(&section.target_dir).unwrap();
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+
+    if section.is_dotfiles {
+        // rel_str is already target-relative with dot (e.g., ".bashrc", ".config/starship.toml")
+        // State key = target-relative path as-is (matches what apply stores)
+        let state_key = rel_str.clone();
+
+        // Source = "dotfiles/" + strip_leading_dot(rel_str) = "dotfiles/bashrc"
+        let stripped = rel_str.strip_prefix('.').unwrap_or(&rel_str);
+        let source_rel = format!("{}{stripped}", section.source_dir);
+
+        Ok(Some(FileRouting {
+            state_key,
+            source_rel,
+        }))
+    } else {
+        // For [files]: state key = target-relative path, source = "files/" + rel
+        let state_key = rel_str.clone();
+        let source_rel = format!("{}{rel_str}", section.source_dir);
+
+        Ok(Some(FileRouting {
+            state_key,
+            source_rel,
+        }))
+    }
+}
+
+/// Copy a file, creating parent directories as needed.
+fn copy_file(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("cannot create directory {}: {e}", parent.display()))?;
+    }
+    std::fs::copy(src, dest)
+        .map_err(|e| anyhow::anyhow!("cannot copy {} → {}: {e}", src.display(), dest.display()))?;
+    Ok(())
 }
 
 /// Try to resolve a target path against a config section's target directory,

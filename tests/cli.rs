@@ -1622,3 +1622,197 @@ fn sync_cherry_pick_in_progress_exits_with_error() {
         .failure()
         .stderr(predicate::str::contains("cherry-pick"));
 }
+
+// ── Recursive directory track tests ──────────────────────────────
+
+#[test]
+fn track_directory_copies_managed_files_back_and_updates_state() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# original bash");
+    fix.add_source("config/starship.toml", "# original starship");
+
+    // Apply to create targets and state
+    fix.nostos().arg("apply").assert().success();
+
+    // Edit both target files
+    fix.add_target(".bashrc", "# edited bash");
+    fix.add_target(".config/starship.toml", "# edited starship");
+
+    // Track the entire target directory
+    let target_dir = fix.target_dir();
+    fix.nostos()
+        .arg("track")
+        .arg(&target_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Tracked 2 files"));
+
+    // Verify sources were updated
+    let bash_src = fs::read_to_string(fix.dir.path().join("dotfiles/bashrc")).unwrap();
+    assert_eq!(bash_src, "# edited bash");
+    let star_src =
+        fs::read_to_string(fix.dir.path().join("dotfiles/config/starship.toml")).unwrap();
+    assert_eq!(star_src, "# edited starship");
+
+    // Verify subsequent apply sees everything up to date
+    fix.nostos()
+        .arg("apply")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("up to date"));
+}
+
+#[test]
+fn track_directory_imports_new_files_into_source_and_state() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# original");
+
+    // Apply to set up state
+    fix.nostos().arg("apply").assert().success();
+
+    // Add a new file directly in the target (not managed yet)
+    fix.add_target(".config/nvim/init.lua", "-- nvim config");
+
+    // Track the entire target directory
+    let target_dir = fix.target_dir();
+    fix.nostos()
+        .arg("track")
+        .arg(&target_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 new"));
+
+    // Verify the new file was imported into source tree with dot stripped
+    let imported = fs::read_to_string(
+        fix.dir.path().join("dotfiles/config/nvim/init.lua"),
+    )
+    .unwrap();
+    assert_eq!(imported, "-- nvim config");
+
+    // Verify subsequent apply deploys it back (i.e., state was registered)
+    fix.nostos()
+        .arg("apply")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("up to date"));
+}
+
+#[test]
+fn track_directory_routes_files_to_correct_section() {
+    // Config with both [dotfiles] (target = <home>) and [files] (target = <home>/bin)
+    let fix = TestFixture::new();
+    let target = fix.target_dir().to_string_lossy().to_string();
+    let bin_target = fix.target_dir().join("bin").to_string_lossy().to_string();
+    fs::create_dir_all(&bin_target).unwrap();
+    fs::create_dir_all(fix.dir.path().join("files")).unwrap();
+
+    let config = format!(
+        "[dotfiles]\nsource = \"dotfiles/\"\ntarget = '{target}'\n\n\
+         [files]\nsource = \"files/\"\ntarget = '{bin_target}'\n"
+    );
+    let fix = fix.with_config(&config);
+
+    fix.add_source("bashrc", "# bash");
+    // Add a file in the files source
+    let files_src = fix.dir.path().join("files/myscript");
+    fs::write(&files_src, "#!/bin/sh").unwrap();
+
+    // Apply to get state populated
+    fix.nostos().arg("apply").assert().success();
+
+    // Edit both targets
+    fix.add_target(".bashrc", "# edited bash");
+    fix.add_target("bin/myscript", "#!/bin/sh\n# edited");
+
+    // Track from the home dir — should route .bashrc → dotfiles, bin/myscript → files
+    fix.nostos()
+        .arg("track")
+        .arg(&target)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 updated"));
+
+    // Verify routing: dotfile went to dotfiles/
+    let bash_src = fs::read_to_string(fix.dir.path().join("dotfiles/bashrc")).unwrap();
+    assert_eq!(bash_src, "# edited bash");
+
+    // Verify routing: plain file went to files/ (longest-prefix match on bin/)
+    let script_src = fs::read_to_string(fix.dir.path().join("files/myscript")).unwrap();
+    assert_eq!(script_src, "#!/bin/sh\n# edited");
+}
+
+#[test]
+fn track_directory_applies_dot_strip_inversion_for_new_dotfiles() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# bash");
+
+    // Apply so we have state
+    fix.nostos().arg("apply").assert().success();
+
+    // Add new nested dotfile in target: .config/alacritty/alacritty.toml
+    fix.add_target(".config/alacritty/alacritty.toml", "[font]\nsize = 14");
+
+    // Track the directory
+    let target_dir = fix.target_dir();
+    fix.nostos()
+        .arg("track")
+        .arg(&target_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 new"));
+
+    // Verify dot was stripped: lands in dotfiles/config/alacritty/alacritty.toml
+    let imported = fs::read_to_string(
+        fix.dir.path().join("dotfiles/config/alacritty/alacritty.toml"),
+    )
+    .unwrap();
+    assert_eq!(imported, "[font]\nsize = 14");
+}
+
+#[test]
+fn track_directory_prints_correct_summary_with_mixed_counts() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# bash");
+    fix.add_source("gitconfig", "# git");
+
+    // Apply
+    fix.nostos().arg("apply").assert().success();
+
+    // Edit one existing file, add one new file
+    fix.add_target(".bashrc", "# edited bash");
+    fix.add_target(".vimrc", "\" new vim config");
+
+    let target_dir = fix.target_dir();
+    fix.nostos()
+        .arg("track")
+        .arg(&target_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Tracked 3 files: 2 updated, 1 new"));
+}
+
+#[test]
+fn track_prune_flag_ignored_for_single_file() {
+    let fix = TestFixture::new().with_default_config();
+    fix.add_source("bashrc", "# original");
+
+    // Apply to create state
+    fix.nostos().arg("apply").assert().success();
+
+    // Edit target
+    fix.add_target(".bashrc", "# edited");
+
+    // Track with --prune — should succeed and behave like normal track
+    let target_path = fix.target_dir().join(".bashrc");
+    fix.nostos()
+        .arg("track")
+        .arg("--prune")
+        .arg(&target_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Tracked"));
+
+    // Source was updated
+    let source = fs::read_to_string(fix.dir.path().join("dotfiles/bashrc")).unwrap();
+    assert_eq!(source, "# edited");
+}
